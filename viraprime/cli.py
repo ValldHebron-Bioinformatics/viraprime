@@ -7,6 +7,7 @@ import logging
 import shlex
 import statistics
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
@@ -28,9 +29,12 @@ from viraprime.lengths import filter_by_length, ungapped_length
 from viraprime.models import (
     Alignment,
     CandidatePair,
+    ColumnStats,
     Consensus,
     DesignParams,
+    LengthFilterResult,
     PipelineError,
+    Record,
     Region,
     RegionResult,
     RunReport,
@@ -199,8 +203,25 @@ def _design_region(
     return RegionResult(region, included, len(design.pairs), n_passing, ranked, design.explain, failures)
 
 
-def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
-    check_params(a)
+@dataclass
+class _Inputs:
+    records: list[Record]
+    lengths: list[int]
+    lf: LengthFilterResult
+    reference_id: str
+    ref_len: int
+
+
+@dataclass
+class _Aligned:
+    aln: Alignment
+    stats: list[ColumnStats]
+    cons: Consensus
+    cmap: CoordMap
+
+
+def _load_inputs(a: argparse.Namespace) -> _Inputs:
+    """Load and validate the input, filter by length and pick the reference."""
     if a.input is not None:
         records = load_fasta(a.input)
     else:
@@ -208,20 +229,32 @@ def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
         alignment_from_records(records)  # validates equal row lengths
     if a.reference_id is not None and a.reference_id not in {r.id for r in records}:
         raise PipelineError(f"--reference-id '{a.reference_id}' is not in the input")
-
     lengths = [ungapped_length(r.seq) for r in records]
     lf = filter_by_length(records, a.length_tolerance, a.outlier_action, a.reference_id)
     # default reference: first sequence left after length filtering
     reference_id = a.reference_id or lf.kept[0].id
     ref_len = ungapped_length(next(r.seq for r in lf.kept if r.id == reference_id))
-    regions = resolve_regions(a.region, a.regions_file, ref_len)
-    aln = run_aligner(lf.kept, a.aligner) if a.input is not None else alignment_from_records(lf.kept)
+    return _Inputs(records, lengths, lf, reference_id, ref_len)
+
+
+def _align_inputs(a: argparse.Namespace, inp: _Inputs) -> _Aligned:
+    """Align (or take the given alignment), write it, and build consensus and coordinates."""
+    kept = inp.lf.kept
+    aln = run_aligner(kept, a.aligner) if a.input is not None else alignment_from_records(kept)
     a.outdir.mkdir(parents=True, exist_ok=True)
     write_alignment(aln, a.outdir / "alignment.fasta")
-
     stats = score_columns(aln)
     cons = build_consensus(stats)
-    cmap = CoordMap(aln, reference_id, cons)
+    return _Aligned(aln, stats, cons, CoordMap(aln, inp.reference_id, cons))
+
+
+def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
+    check_params(a)
+    inp = _load_inputs(a)
+    regions = resolve_regions(a.region, a.regions_file, inp.ref_len)
+    al = _align_inputs(a, inp)
+    records, lengths, lf, reference_id = inp.records, inp.lengths, inp.lf, inp.reference_id
+    aln, stats, cons, cmap = al.aln, al.stats, al.cons, al.cmap
     # validate every region (incl. its consensus length) before any primer design
     included: dict[str, tuple[int, int]] = {}
     for region in regions:
