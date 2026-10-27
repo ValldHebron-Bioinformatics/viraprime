@@ -79,3 +79,40 @@ class PairCoverage:
     covered: list[str]
     not_covered: dict[str, str]
     coverage_pct: float
+
+
+@dataclass(frozen=True)
+class Primer:
+    seq: str
+    start: int  # 0-based leftmost consensus position (for both primers)
+    length: int
+    tm: float
+    gc: float
+
+
+@dataclass(frozen=True)
+class CandidatePair:
+    forward: Primer
+    reverse: Primer
+    penalty: float
+
+
+@dataclass(frozen=True)
+class DesignParams:
+    tm_min: float
+    tm_opt: float
+    tm_max: float
+    max_tm_diff: float
+    len_min: int
+    len_max: int
+    gc_min: float
+    gc_max: float
+    amplicon_min: int
+    amplicon_max: int
+    candidates: int
+
+
+@dataclass
+class DesignResult:
+    pairs: list[CandidatePair]
+    explain: dict[str, str]
