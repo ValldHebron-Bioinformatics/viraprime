@@ -180,6 +180,8 @@
         <p>Sequences more than 10% away from the median length are dropped, kept with a warning, or stop the run.</p></li>
       <li><button type="button" aria-expanded="false"><span class="opt-name">Your own alignment</span><code translate="no">--aligned</code></button>
         <p>Pass a pre-aligned FASTA and skip MAFFT or MUSCLE entirely.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="opt-name">Check existing primers</span><code translate="no">viraprime check --primers assays.tsv</code></button>
+        <p>Test published or earlier assays against your sequences with the same rules, without designing new ones. Each pair gets a row in check.tsv.</p></li>
       <li><button type="button" aria-expanded="false"><span class="opt-name">Primer chemistry</span><code translate="no">--tm-opt 60</code></button>
         <p>Tm 57–63 °C and within 2 °C inside a pair, 18–25 bases, 40–60% GC. Every limit has its own flag.</p></li>
     </ul>
@@ -212,6 +214,8 @@
         <p id="a3">The run finished and wrote every file, but at least one region had no pair reaching the coverage threshold. Its best pairs are flagged below_threshold and report.txt counts why they miss.</p></li>
       <li><button type="button" aria-expanded="false" aria-controls="a4">Can I bring my own alignment?</button>
         <p id="a4">Yes. Pass it with --aligned and the aligner step is skipped, so neither MAFFT nor MUSCLE needs to be installed.</p></li>
+      <li><button type="button" aria-expanded="false" aria-controls="a8">Can I test primers I already have?</button>
+        <p id="a8">Yes. List them as name, forward and reverse in a tab-separated file and run viraprime check. Each pair is found on the consensus and scored on every sequence with the same rules as design.</p></li>
       <li><button type="button" aria-expanded="false" aria-controls="a5">Which coordinates do regions use?</button>
         <p id="a5">1-based, inclusive positions on the reference sequence: the first one in the file, unless you name another with --reference-id. They are mapped to alignment columns for you.</p></li>
       <li><button type="button" aria-expanded="false" aria-controls="a6">How is a degenerate base chosen?</button>
@@ -231,18 +235,22 @@
       <p class="r">Fill in the run, copy the command, and the alignment, the primer table and the report land in the folder you name.</p>
     </div>
     <form class="dialog" data-ui id="builder" aria-labelledby="dlg-title" novalidate>
-      <p class="dlg-title" id="dlg-title">New run</p>
+      <div class="dlg-head">
+        <p class="dlg-title" id="dlg-title">New run</p>
+        <div class="seg" role="group" aria-label="Run type"><button type="button" aria-pressed="true" data-mode="design">Design</button><button type="button" aria-pressed="false" data-mode="check">Check</button></div>
+      </div>
       <div class="dlg-grid">
         <label class="fld fld-wide"><span>Input FASTA</span><input name="input" value="examples/family.fasta" autocomplete="off" spellcheck="false"></label>
         <label class="fld"><span>Output folder</span><input name="out" value="out" autocomplete="off" spellcheck="false"></label>
-        <label class="fld"><span>Regions</span><input name="regions" value="cons:61-540 hv:701-1100" autocomplete="off" spellcheck="false" aria-describedby="reg-hint"></label>
-        <p class="hint fld-wide" id="reg-hint">NAME:START-END on the reference, separated by spaces. Leave empty for the whole genome.</p>
-        <label class="fld"><span>Amplicon min (bp)</span><input name="amin" type="number" inputmode="numeric" autocomplete="off" min="1" value="100"></label>
-        <label class="fld"><span>Amplicon max (bp)</span><input name="amax" type="number" inputmode="numeric" autocomplete="off" min="1" value="300"></label>
+        <label class="fld" data-only="check" hidden><span>Primers file</span><input name="primers" value="assays.tsv" autocomplete="off" spellcheck="false"></label>
+        <label class="fld" data-only="design"><span>Regions</span><input name="regions" value="cons:61-540 hv:701-1100" autocomplete="off" spellcheck="false" aria-describedby="reg-hint"></label>
+        <p class="hint fld-wide" id="reg-hint" data-only="design">NAME:START-END on the reference, separated by spaces. Leave empty for the whole genome.</p>
+        <label class="fld" data-only="design"><span>Amplicon min (bp)</span><input name="amin" type="number" inputmode="numeric" autocomplete="off" min="1" value="100"></label>
+        <label class="fld" data-only="design"><span>Amplicon max (bp)</span><input name="amax" type="number" inputmode="numeric" autocomplete="off" min="1" value="300"></label>
         <fieldset class="fld"><legend>Aligner</legend>
           <div class="seg"><button type="button" aria-pressed="true" data-aligner="mafft">MAFFT</button><button type="button" aria-pressed="false" data-aligner="muscle">MUSCLE</button></div>
         </fieldset>
-        <label class="chk"><input type="checkbox" name="deg" checked> Allow degenerate bases</label>
+        <label class="chk" data-only="design"><input type="checkbox" name="deg" checked> Allow degenerate bases</label>
       </div>
       <pre class="cmd"><code translate="no" id="cmd">viraprime -i examples/family.fasta -o out --region cons:61-540 --region hv:701-1100 --amplicon-min 100 --amplicon-max 300 --allow-degenerate</code></pre>
       <p class="dlg-err" id="dlg-err" role="alert"></p>
