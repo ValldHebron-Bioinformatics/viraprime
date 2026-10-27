@@ -36,3 +36,11 @@ class Region:
     name: str
     start: int
     end: int
+
+
+@dataclass
+class LengthFilterResult:
+    kept: list[Record]
+    outliers: list[tuple[str, int]]
+    median: float
+    action: str
