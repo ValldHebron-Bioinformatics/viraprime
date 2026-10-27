@@ -8,6 +8,7 @@ import shlex
 import statistics
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 from Bio.Seq import reverse_complement
 
@@ -54,8 +55,16 @@ class _ListHandler(logging.Handler):
         self.lines.append(self.format(record))
 
 
+class _Parser(argparse.ArgumentParser):
+    """ArgumentParser whose usage errors exit 1 (exit 2 means 'below threshold')."""
+
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_ERROR, f"{self.prog}: error: {message}\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
+    p = _Parser(
         prog="consensus-primers",
         description="Design consensus PCR primers from a multi-FASTA of related sequences.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -157,15 +166,17 @@ def _score_candidate(
 
 def _design_region(
     region: Region,
+    included: tuple[int, int],
     cons: Consensus,
-    cmap: CoordMap,
     aln: Alignment,
     a: argparse.Namespace,
     dparams: DesignParams,
     sparams: ScoringParams,
 ) -> RegionResult:
-    included = cmap.region_to_included(region)
-    design = run_primer3(cons, included, dparams)
+    try:
+        design = run_primer3(cons, included, dparams)
+    except PipelineError as exc:
+        raise PipelineError(f"Region '{region.name}': {exc}") from exc
     scored = [
         _score_candidate(c, cons, aln, sparams, a.allow_degenerate, a.max_degeneracy)
         for c in design.pairs
@@ -195,15 +206,15 @@ def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
     else:
         records = load_fasta(a.aligned, allow_gaps=True)
         alignment_from_records(records)  # validates equal row lengths
-    ids = [r.id for r in records]
-    reference_id = a.reference_id or ids[0]
-    if reference_id not in ids:
-        raise PipelineError(f"--reference-id '{reference_id}' is not in the input")
-    ref_len = ungapped_length(records[ids.index(reference_id)].seq)
-    regions = resolve_regions(a.region, a.regions_file, ref_len)
+    if a.reference_id is not None and a.reference_id not in {r.id for r in records}:
+        raise PipelineError(f"--reference-id '{a.reference_id}' is not in the input")
 
     lengths = [ungapped_length(r.seq) for r in records]
-    lf = filter_by_length(records, a.length_tolerance, a.outlier_action, reference_id)
+    lf = filter_by_length(records, a.length_tolerance, a.outlier_action, a.reference_id)
+    # default reference: first sequence left after length filtering
+    reference_id = a.reference_id or lf.kept[0].id
+    ref_len = ungapped_length(next(r.seq for r in lf.kept if r.id == reference_id))
+    regions = resolve_regions(a.region, a.regions_file, ref_len)
     aln = run_aligner(lf.kept, a.aligner) if a.input is not None else alignment_from_records(lf.kept)
     a.outdir.mkdir(parents=True, exist_ok=True)
     write_alignment(aln, a.outdir / "alignment.fasta")
@@ -211,15 +222,26 @@ def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
     stats = score_columns(aln)
     cons = build_consensus(stats)
     cmap = CoordMap(aln, reference_id, cons)
+    # validate every region (incl. its consensus length) before any primer design
+    included: dict[str, tuple[int, int]] = {}
     for region in regions:
         cmap.validate_region(region, a.amplicon_min)
+        included[region.name] = cmap.region_to_included(region)
+        if included[region.name][1] < a.amplicon_min:
+            raise PipelineError(
+                f"Region '{region.name}' spans only {included[region.name][1]} consensus "
+                f"positions (the reference has insertions there), shorter than "
+                f"--amplicon-min ({a.amplicon_min})"
+            )
 
     dparams = DesignParams(
         a.tm_min, a.tm_opt, a.tm_max, a.max_tm_diff, a.primer_len_min, a.primer_len_max,
         a.gc_min, a.gc_max, a.amplicon_min, a.amplicon_max, a.candidates,
     )
     sparams = ScoringParams(a.max_mismatches, a.three_prime_window)
-    results = [_design_region(r, cons, cmap, aln, a, dparams, sparams) for r in regions]
+    results = [
+        _design_region(r, included[r.name], cons, aln, a, dparams, sparams) for r in regions
+    ]
 
     write_tsv(results, cmap, a.outdir / "primers.tsv")
     failed = [res.region.name for res in results if res.rank.below_threshold]

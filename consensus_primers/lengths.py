@@ -21,9 +21,12 @@ def filter_by_length(
     records: list[Record],
     tolerance: float,
     action: OutlierAction,
-    reference_id: str,
+    reference_id: str | None,
 ) -> LengthFilterResult:
-    """Flag sequences whose length differs from the median by more than tolerance × median."""
+    """Flag sequences whose length differs from the median by more than tolerance × median.
+
+    reference_id is the user-chosen reference (None when defaulted); dropping it is an error.
+    """
     lengths = {r.id: ungapped_length(r.seq) for r in records}
     median = float(statistics.median(lengths.values()))
     limit = tolerance * median
@@ -40,7 +43,7 @@ def filter_by_length(
         raise PipelineError(f"Length outliers found (--outlier-action abort): {listed}")
 
     if action == "drop":
-        if reference_id in outlier_ids:
+        if reference_id is not None and reference_id in outlier_ids:
             raise PipelineError(
                 f"The reference sequence '{reference_id}' is a length outlier and would be "
                 "dropped; choose another --reference-id or adjust --length-tolerance"

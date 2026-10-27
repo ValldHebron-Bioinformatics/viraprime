@@ -59,3 +59,37 @@ def test_reference_id_with_description(tmp_path: Path) -> None:
     rc = main(["-i", str(fa), "-o", str(tmp_path / "o"), *AMP, "--reference-id", "seqX02",
                "--region", "100-500"])
     assert rc == 0
+
+
+def test_argument_error_exits_1() -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["-i", "x.fa", "-o", "out"])  # missing --amplicon-min/max
+    assert exc.value.code == 1
+
+
+@needs_mafft
+def test_region_too_short_on_consensus_fails_before_design(
+    family: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # seq05 carries a 2 bp insertion after 570: region 560-659 is 100 bp on seq05 but only
+    # 98 consensus positions, shorter than --amplicon-min 100
+    out = tmp_path / "o"
+    rc = main(["-i", str(family), "-o", str(out), "--reference-id", "seq05",
+               "--region", "good:100-500", "--region", "short:560-659", *AMP])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "short" in err and "amplicon-min" in err
+    assert not (out / "primers.tsv").exists()
+
+
+@needs_mafft
+def test_default_reference_is_first_after_filtering(tmp_path: Path) -> None:
+    base, recs = make_family()
+    fa = tmp_path / "f.fa"
+    fa.write_text(f">partial\n{base[:300]}\n" + "".join(f">{r}\n{s}\n" for r, s in recs))
+    out = tmp_path / "o"
+    assert main(["-i", str(fa), "-o", str(out), "--region", "100-500", *AMP]) == 0
+    assert "Reference: seq01" in (out / "report.txt").read_text()
+    rc = main(["-i", str(fa), "-o", str(tmp_path / "o2"), "--reference-id", "partial",
+               "--region", "100-200", *AMP])
+    assert rc == 1
