@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from consensus_primers.models import Alignment, ScoringParams
-from consensus_primers.scoring import match_primer, score_pair
+from viraprime.models import Alignment, ScoringParams
+from viraprime.scoring import match_primer, score_pair
 
 P = ScoringParams(max_mismatches=2, window=5)
 SITE = "ACGTTGCAAGCTTCGGATCC"  # 20-mer

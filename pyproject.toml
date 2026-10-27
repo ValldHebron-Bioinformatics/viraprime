@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "consensus-primers"
+name = "viraprime"
 version = "0.1.0"
 description = "Design consensus PCR primers from a multi-FASTA of related sequences"
 requires-python = ">=3.10"
@@ -13,10 +13,10 @@ dependencies = ["biopython>=1.81", "primer3-py>=2.0"]
 dev = ["pytest"]
 
 [project.scripts]
-consensus-primers = "consensus_primers.cli:main"
+viraprime = "viraprime.cli:main"
 
 [tool.setuptools]
-packages = ["consensus_primers"]
+packages = ["viraprime"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

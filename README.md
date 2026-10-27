@@ -1,4 +1,4 @@
-# consensus-primers
+# viraprime
 
 Design PCR primer pairs that work across a family of related sequences (variants of a gene,
 strains of a virus, …). The tool aligns the sequences, builds a consensus, asks
@@ -21,7 +21,7 @@ or MUSCLE 5 must be on `PATH` unless you pass a pre-aligned file with `--aligned
 
 ```bash
 python examples/make_example.py          # writes examples/family.fasta (10 synthetic sequences)
-consensus-primers -i examples/family.fasta -o out \
+viraprime -i examples/family.fasta -o out \
     --region cons:61-540 --region hv:701-1100 \
     --amplicon-min 100 --amplicon-max 300 --allow-degenerate
 ```
@@ -30,7 +30,7 @@ The example family has a conserved block (61–540) and a hypervariable block (7
 finds pairs with 100 % coverage in `cons`, reports the best available (30 %) pairs for `hv` with
 `below_threshold=True`, explains why in `out/report.txt`, and exits with code 2.
 
-`python -m consensus_primers …` works the same as `consensus-primers …`.
+`python -m viraprime …` works the same as `viraprime …`.
 
 ## Pipeline
 

@@ -12,20 +12,20 @@ from typing import NoReturn
 
 from Bio.Seq import reverse_complement
 
-from consensus_primers.align import run_aligner
-from consensus_primers.conservation import build_consensus, score_columns
-from consensus_primers.coords import CoordMap
-from consensus_primers.degenerate import degenerate_pair, tm_range
-from consensus_primers.design import run_primer3
-from consensus_primers.io import (
+from viraprime.align import run_aligner
+from viraprime.conservation import build_consensus, score_columns
+from viraprime.coords import CoordMap
+from viraprime.degenerate import degenerate_pair, tm_range
+from viraprime.design import run_primer3
+from viraprime.io import (
     alignment_from_records,
     load_fasta,
     write_alignment,
     write_report,
     write_tsv,
 )
-from consensus_primers.lengths import filter_by_length, ungapped_length
-from consensus_primers.models import (
+from viraprime.lengths import filter_by_length, ungapped_length
+from viraprime.models import (
     Alignment,
     CandidatePair,
     Consensus,
@@ -37,11 +37,11 @@ from consensus_primers.models import (
     ScoredPair,
     ScoringParams,
 )
-from consensus_primers.ranking import failure_summary, rank
-from consensus_primers.regions import resolve_regions
-from consensus_primers.scoring import score_pair
+from viraprime.ranking import failure_summary, rank
+from viraprime.regions import resolve_regions
+from viraprime.scoring import score_pair
 
-log = logging.getLogger("consensus_primers")
+log = logging.getLogger("viraprime")
 
 EXIT_OK, EXIT_ERROR, EXIT_BELOW_THRESHOLD = 0, 1, 2
 
@@ -65,7 +65,7 @@ class _Parser(argparse.ArgumentParser):
 
 def build_parser() -> argparse.ArgumentParser:
     p = _Parser(
-        prog="consensus-primers",
+        prog="viraprime",
         description="Design consensus PCR primers from a multi-FASTA of related sequences.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -274,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     log.setLevel(logging.DEBUG if args.verbose else logging.INFO)
     log.propagate = False
     try:
-        return run(args, "consensus-primers " + shlex.join(argv), memory.lines)
+        return run(args, "viraprime " + shlex.join(argv), memory.lines)
     except PipelineError as exc:
         log.error("%s", exc)
         if args.verbose:

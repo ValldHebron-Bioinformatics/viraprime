@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING
 
 from Bio import SeqIO
 
-from consensus_primers.models import Alignment, PipelineError, Record, RegionResult, RunReport
+from viraprime.models import Alignment, PipelineError, Record, RegionResult, RunReport
 
 if TYPE_CHECKING:
-    from consensus_primers.coords import CoordMap
+    from viraprime.coords import CoordMap
 
 log = logging.getLogger(__name__)
 
@@ -142,7 +142,7 @@ def _region_section(res: RegionResult, min_coverage: float) -> list[str]:
 
 def write_report(report: RunReport, path: Path) -> None:
     lf = report.length
-    out = ["consensus-primers report", "=" * 24,
+    out = ["viraprime report", "=" * 24,
            f"Date: {datetime.now().isoformat(timespec='seconds')}",
            f"Command: {report.command}", "",
            "Parameters", "----------"]

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from Bio.Seq import reverse_complement
 
-from consensus_primers.design import run_primer3
-from consensus_primers.models import Consensus, DesignParams
+from viraprime.design import run_primer3
+from viraprime.models import Consensus, DesignParams
 
 
 def params(amin: int, amax: int, candidates: int = 50) -> DesignParams:

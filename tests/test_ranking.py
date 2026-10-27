@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from consensus_primers.models import CandidatePair, PairCoverage, Primer, ScoredPair
-from consensus_primers.ranking import failure_summary, rank
+from viraprime.models import CandidatePair, PairCoverage, Primer, ScoredPair
+from viraprime.ranking import failure_summary, rank
 
 
 def sp(cov: float, pen: float, not_covered: dict[str, str] | None = None) -> ScoredPair:

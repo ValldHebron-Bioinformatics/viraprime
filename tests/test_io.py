@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from consensus_primers.io import load_fasta
-from consensus_primers.models import PipelineError, Record
+from viraprime.io import load_fasta
+from viraprime.models import PipelineError, Record
 from tests.synthetic import write_fasta
 
 

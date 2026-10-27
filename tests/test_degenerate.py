@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from consensus_primers.degenerate import degenerate_pair, fold, tm_range
-from consensus_primers.models import Alignment, ScoringParams
+from viraprime.degenerate import degenerate_pair, fold, tm_range
+from viraprime.models import Alignment, ScoringParams
 
 STRICT = ScoringParams(max_mismatches=0, window=5)
 FWD = "ACGTTGCAAGCTTCGGATCC"

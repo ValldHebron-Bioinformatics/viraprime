@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from consensus_primers import align
-from consensus_primers.cli import main
+from viraprime import align
+from viraprime.cli import main
 from tests.conftest import needs_mafft
 from tests.synthetic import make_family, write_fasta
 

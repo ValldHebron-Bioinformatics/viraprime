@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from consensus_primers.models import Alignment, ColumnStats, Consensus
+from viraprime.models import Alignment, ColumnStats, Consensus
 
 BASE_ORDER = "ACGT"
 

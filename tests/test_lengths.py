@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from consensus_primers.lengths import filter_by_length
-from consensus_primers.models import PipelineError, Record
+from viraprime.lengths import filter_by_length
+from viraprime.models import PipelineError, Record
 
 
 def _recs(extra: list[Record] | None = None) -> list[Record]:

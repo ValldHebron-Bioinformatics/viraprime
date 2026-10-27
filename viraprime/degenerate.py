@@ -7,8 +7,8 @@ import math
 
 import primer3
 
-from consensus_primers.models import Alignment, PairCoverage, ScoringParams
-from consensus_primers.scoring import CODE_FOR, IUPAC, match_primer, score_pair
+from viraprime.models import Alignment, PairCoverage, ScoringParams
+from viraprime.scoring import CODE_FOR, IUPAC, match_primer, score_pair
 
 BASES = "ACGT"
 

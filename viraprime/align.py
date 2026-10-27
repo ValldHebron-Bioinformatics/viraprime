@@ -9,8 +9,8 @@ import tempfile
 from pathlib import Path
 from typing import Literal
 
-from consensus_primers.io import alignment_from_records, load_fasta
-from consensus_primers.models import Alignment, PipelineError, Record
+from viraprime.io import alignment_from_records, load_fasta
+from viraprime.models import Alignment, PipelineError, Record
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ def check_binary(tool: Aligner) -> str:
 def run_aligner(records: list[Record], tool: Aligner) -> Alignment:
     """Align records and return rows in the input order."""
     binary = check_binary(tool)
-    with tempfile.TemporaryDirectory(prefix="consensus_primers_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="viraprime_") as tmp:
         tmpdir = Path(tmp)
         in_fa = tmpdir / "in.fasta"
         out_fa = tmpdir / "out.fasta"
