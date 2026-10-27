@@ -32,6 +32,41 @@ finds pairs with 100 % coverage in `cons`, reports the best available (30 %) pai
 
 `python -m viraprime …` works the same as `viraprime …`.
 
+## Checking existing primers
+
+`viraprime check` tests primer pairs you already have (a published assay, pairs from an earlier
+run, pairs from another tool) against your sequences, without designing new ones. Each primer is
+placed where it fits the consensus best, then the pair is scored on every sequence with exactly
+the same matching rules as design mode.
+
+List the pairs in a tab-separated file, written 5′→3′ as you would order them (IUPAC codes
+allowed; a header line, blank lines and `#` comments are optional):
+
+```
+name	forward	reverse
+cons	CAGTCCCCTACGTCGCATATC	TAGTTGGGCGTCCTGAGAAAC
+hv	CTCCAGTGGMGGTCTTGGTKG	GCAYKCATCCMAGTAAGCACAC
+```
+
+```bash
+viraprime check -i examples/family.fasta --primers assays.tsv -o out_check
+```
+
+It writes `alignment.fasta`, `report.txt` (one section per pair, with why it misses sequences)
+and `check.tsv`, one row per pair: `name, forward_seq, reverse_seq, forward_tm, reverse_tm,
+forward_gc, reverse_gc, forward_len, reverse_len, degenerate, forward_tm_range,
+reverse_tm_range, located, forward_site_mismatches, reverse_site_mismatches, amplicon_start,
+amplicon_end, amplicon_len, coverage_pct, n_covered, n_total, below_threshold, not_covered,
+note`. On the example family the two pairs above give 100 % and 30 % coverage, as in the design
+run.
+
+A pair is reported as not located (0 % coverage, reason in `note`) when a primer fits two places
+equally well or the reverse primer does not bind downstream of the forward one. Options shared
+with design mode (`-i`/`--aligned`, `--aligner`, `--reference-id`, `--length-tolerance`,
+`--outlier-action`, `--max-mismatches`, `--three-prime-window`, `--min-coverage`, `-v`) work
+the same; design-only options such as `--region` are rejected. Exit codes: `0` every pair meets
+`--min-coverage`, `2` at least one does not (outputs are still written), `1` error.
+
 ## Pipeline
 
 1. **Load & validate** the FASTA: errors on missing/empty files, empty records, duplicate IDs
