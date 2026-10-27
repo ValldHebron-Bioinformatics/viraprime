@@ -44,3 +44,17 @@ class LengthFilterResult:
     outliers: list[tuple[str, int]]
     median: float
     action: str
+
+
+@dataclass(frozen=True)
+class ColumnStats:
+    majority_base: str
+    majority_freq: float
+    gap_frac: float
+    n_ambiguous: int
+
+
+@dataclass
+class Consensus:
+    seq: str
+    cons_to_col: list[int]
