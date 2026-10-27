@@ -116,3 +116,22 @@ class DesignParams:
 class DesignResult:
     pairs: list[CandidatePair]
     explain: dict[str, str]
+
+
+@dataclass
+class ScoredPair:
+    pair: CandidatePair
+    fwd_seq: str  # 5'->3', possibly degenerate
+    rev_seq: str  # 5'->3', possibly degenerate
+    fwd_cols: list[int]
+    rev_cols: list[int]
+    coverage: PairCoverage
+    degenerate: bool
+    fwd_tm_range: tuple[float, float] | None
+    rev_tm_range: tuple[float, float] | None
+
+
+@dataclass
+class RankResult:
+    pairs: list[ScoredPair]
+    below_threshold: bool
