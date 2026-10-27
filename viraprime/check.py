@@ -2,12 +2,31 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from pathlib import Path
 
-from viraprime.models import Assay, PipelineError
+import primer3
+from Bio.Seq import reverse_complement
+
+from viraprime.degenerate import fold, tm_range
+from viraprime.models import (
+    Alignment,
+    Assay,
+    CheckResult,
+    Consensus,
+    Location,
+    PairCoverage,
+    PipelineError,
+    ScoringParams,
+)
 from viraprime.regions import NAME_RE
-from viraprime.scoring import IUPAC
+from viraprime.scoring import IUPAC, score_pair
+
+log = logging.getLogger("viraprime")
+
+TM_FOLD_LIMIT = 256  # above this, enumerating every expansion for a Tm range is too slow
+NOT_DOWNSTREAM = "reverse site is not downstream of forward site"
 
 
 def _clean(field: str) -> str:
@@ -61,3 +80,84 @@ def load_assays(path: Path, window: int) -> list[Assay]:
     if dups:
         raise PipelineError(f"{path.name}: duplicate pair names: {', '.join(dups)}")
     return assays
+
+
+def locate(site: str, consensus_seq: str) -> Location | None:
+    """Start on the consensus with the fewest mismatches; None if tied or the site is too long."""
+    n = len(site)
+    if n > len(consensus_seq):
+        return None
+    allowed = [IUPAC[b] for b in site]
+    best, best_starts = n + 1, []
+    for start in range(len(consensus_seq) - n + 1):
+        window = consensus_seq[start:start + n]
+        mm = sum(c not in ok for c, ok in zip(window, allowed))
+        if mm < best:
+            best, best_starts = mm, [start]
+        elif mm == best:
+            best_starts.append(start)
+    return Location(best_starts[0], best) if len(best_starts) == 1 else None
+
+
+def _gc(primer: str) -> float:
+    """Mean GC % over every expansion of a (possibly degenerate) primer."""
+    return 100 * sum(len(IUPAC[b] & {"G", "C"}) / len(IUPAC[b]) for b in primer) / len(primer)
+
+
+def _tm(primer: str, label: str, notes: list[str]) -> tuple[float | None, tuple[float, float] | None]:
+    n = fold(primer)
+    if n == 1:
+        return primer3.calc_tm(primer), None
+    if n > TM_FOLD_LIMIT:
+        notes.append(f"Tm not computed: {label} fold {n} > {TM_FOLD_LIMIT}")
+        return None, None
+    lo, hi = tm_range(primer)
+    return (lo + hi) / 2, (lo, hi)
+
+
+def check_assay(
+    assay: Assay, aln: Alignment, cons: Consensus, params: ScoringParams, min_coverage: float
+) -> CheckResult:
+    """Locate both primers on the consensus and score the pair on every sequence."""
+    notes: list[str] = []
+    fwd_site, rev_site = assay.forward, reverse_complement(assay.reverse)
+    locs: dict[str, Location | None] = {}
+    for label, site in (("fwd", fwd_site), ("rev", rev_site)):
+        if len(site) > len(cons.seq):
+            notes.append(f"{label} primer is longer than the consensus")
+            locs[label] = None
+            continue
+        loc = locate(site, cons.seq)
+        if loc is None:
+            notes.append(f"ambiguous binding site for {label} primer")
+        elif loc.mismatches > params.max_mismatches:
+            log.warning(
+                "Pair %s: %s primer matches the consensus with %d mismatches; it may not belong "
+                "to this family or may be written in the wrong orientation",
+                assay.name, label, loc.mismatches,
+            )
+        locs[label] = loc
+    fwd, rev = locs["fwd"], locs["rev"]
+    located = fwd is not None and rev is not None
+    if located and rev.start <= fwd.start + len(fwd_site) - 1:
+        notes.append(NOT_DOWNSTREAM)
+        located = False
+
+    fwd_cols = rev_cols = []
+    if located:
+        fwd_cols = cons.cons_to_col[fwd.start:fwd.start + len(fwd_site)]
+        rev_cols = cons.cons_to_col[rev.start:rev.start + len(rev_site)]
+        coverage = score_pair(fwd_site, fwd_cols, rev_site, rev_cols, aln, params)
+    else:
+        coverage = PairCoverage([], {sid: "not located" for sid in aln.ids}, 0.0)
+
+    fwd_tm, fwd_range = _tm(assay.forward, "fwd", notes)
+    rev_tm, rev_range = _tm(assay.reverse, "rev", notes)
+    return CheckResult(
+        assay=assay, located=located, note="; ".join(notes), fwd=fwd, rev=rev,
+        fwd_cols=list(fwd_cols), rev_cols=list(rev_cols), coverage=coverage,
+        fwd_tm=fwd_tm, rev_tm=rev_tm, fwd_tm_range=fwd_range, rev_tm_range=rev_range,
+        fwd_gc=_gc(assay.forward), rev_gc=_gc(assay.reverse),
+        degenerate=fold(assay.forward) > 1 or fold(assay.reverse) > 1,
+        below_threshold=coverage.coverage_pct < min_coverage,
+    )
