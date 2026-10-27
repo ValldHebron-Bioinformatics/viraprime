@@ -135,3 +135,33 @@ class ScoredPair:
 class RankResult:
     pairs: list[ScoredPair]
     below_threshold: bool
+
+
+@dataclass
+class RegionResult:
+    region: Region
+    included: tuple[int, int]
+    n_candidates: int
+    n_passing: int
+    rank: RankResult
+    explain: dict[str, str]
+    failures: list[tuple[str, int]]
+
+
+@dataclass
+class RunReport:
+    command: str
+    params: dict[str, object]
+    n_input: int
+    median_len: float
+    min_len: int
+    max_len: int
+    length: LengthFilterResult
+    reference_id: str
+    aln_length: int
+    cons_length: int
+    n_conserved: int
+    mean_conservation: float
+    min_coverage: float
+    regions: list[RegionResult]
+    log_lines: list[str]
