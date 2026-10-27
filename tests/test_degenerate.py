@@ -65,3 +65,20 @@ def test_tm_range_orders() -> None:
     assert lo < hi
     lo2, hi2 = tm_range("ACGTAACGTACGTACGTAC")
     assert lo2 == hi2
+
+
+def test_co_occurring_mismatches_rescued() -> None:
+    # seq b differs at one forward and one reverse position: no single change rescues it
+    b = row(sub(FWD, 3, "C"), sub(REV, 10, "A"))
+    aln = Alignment(["a", "b"], [row(), b])
+    f, r, cov = degenerate_pair(FWD, FCOLS, REV, RCOLS, aln, STRICT, max_fold=8)
+    assert f[3] == "Y" and r[10] == "R"
+    assert cov.coverage_pct == 100.0
+
+
+def test_no_useless_degeneracy_when_rescue_impossible() -> None:
+    # seq b also has a 3'-terminal mismatch, so it can never be rescued
+    b = row(sub(sub(FWD, 3, "C"), 19, "A"))
+    aln = Alignment(["a", "b"], [row(), b])
+    f, r, _ = degenerate_pair(FWD, FCOLS, REV, RCOLS, aln, STRICT, max_fold=8)
+    assert f == FWD and r == REV

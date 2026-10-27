@@ -8,7 +8,7 @@ import math
 import primer3
 
 from consensus_primers.models import Alignment, PairCoverage, ScoringParams
-from consensus_primers.scoring import CODE_FOR, IUPAC, score_pair
+from consensus_primers.scoring import CODE_FOR, IUPAC, match_primer, score_pair
 
 BASES = "ACGT"
 
@@ -25,6 +25,17 @@ def tm_range(primer: str) -> tuple[float, float]:
     return min(tms), max(tms)
 
 
+def _mismatch_burden(
+    sites: dict[str, str], cols: dict[str, list[int]], rows: list[str], params: ScoringParams
+) -> int:
+    """Total primer mismatches over all sequences (lower is better)."""
+    return sum(
+        match_primer(sites["fwd"], cols["fwd"], row, "right", params).mismatches
+        + match_primer(sites["rev"], cols["rev"], row, "left", params).mismatches
+        for row in rows
+    )
+
+
 def degenerate_pair(
     fwd_site: str,
     fwd_cols: list[int],
@@ -36,16 +47,22 @@ def degenerate_pair(
 ) -> tuple[str, str, PairCoverage]:
     """Add one IUPAC base at a time, choosing the change that rescues most sequences.
 
-    Sites are in forward-strand orientation. The 3'-terminal base of each primer (last
-    base of the forward site, first base of the reverse site) is never changed.
+    Changes are ranked by sequences rescued, then by mismatches removed (so a sequence
+    needing several changes can still be rescued), then by distance from the 3' end.
+    The result is cut back to the last change that rescued a sequence, so no
+    degeneracy is added without benefit. Sites are in forward-strand orientation; the
+    3'-terminal base of each primer (last base of the forward site, first base of the
+    reverse site) is never changed.
     """
     sites = {"fwd": fwd_site, "rev": rev_site}
     cols = {"fwd": fwd_cols, "rev": rev_cols}
     rows = dict(zip(aln.ids, aln.rows))
     cov = score_pair(sites["fwd"], fwd_cols, sites["rev"], rev_cols, aln, params)
+    burden = _mismatch_burden(sites, cols, aln.rows, params)
+    best_state = (dict(sites), cov)
 
     while cov.not_covered:
-        best: tuple[tuple[int, int, int, int], dict[str, str], PairCoverage] | None = None
+        best: tuple[tuple[int, int, int, bool, int], dict[str, str], PairCoverage, int] | None = None
         for which in ("fwd", "rev"):
             site = sites[which]
             n = len(site)
@@ -61,12 +78,17 @@ def degenerate_pair(
                         continue
                     trial = dict(sites, **{which: trial_site})
                     trial_cov = score_pair(trial["fwd"], fwd_cols, trial["rev"], rev_cols, aln, params)
+                    trial_burden = _mismatch_burden(trial, cols, aln.rows, params)
                     gain = len(trial_cov.covered) - len(cov.covered)
                     dist_from_3p = n - 1 - i if which == "fwd" else i
-                    key = (gain, dist_from_3p, which == "fwd", -BASES.index(b))
+                    key = (gain, burden - trial_burden, dist_from_3p, which == "fwd", -BASES.index(b))
                     if best is None or key > best[0]:
-                        best = (key, trial, trial_cov)
-        if best is None or best[0][0] <= 0:
+                        best = (key, trial, trial_cov, trial_burden)
+        if best is None or (best[0][0] <= 0 and best[0][1] <= 0):
             break
-        _, sites, cov = best
-    return sites["fwd"], sites["rev"], cov
+        _, sites, cov, burden = best
+        if len(cov.covered) > len(best_state[1].covered):
+            best_state = (dict(sites), cov)
+
+    final_sites, final_cov = best_state
+    return final_sites["fwd"], final_sites["rev"], final_cov
