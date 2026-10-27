@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>viraprime — PCR primers that fit every strain</title>
+<meta name="description" content="viraprime designs PCR primer pairs on the consensus of a virus family, then re-checks every pair against every sequence and ranks it by how many it really amplifies.">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#ffffff">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap"><!-- taste-skill-ignore: code face for pre/code only -->
+<link rel="stylesheet" href="style.css">
+<script>document.documentElement.classList.add('js')</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="bar wrap">
+  <a class="wordmark" translate="no" href="#top" aria-label="viraprime, back to top">viraprime</a>
+  <nav aria-label="Main">
+    <ul>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#outputs">Outputs</a></li>
+      <li><a href="#options">Options</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+  </nav>
+  <a class="btn btn-ink" href="https://github.com/ValldHebron-Bioinformatics/viraprime">GitHub</a>
+</header>
+
+<main id="main">
+
+<!-- Hero: the product's own check, live -->
+<section class="hero wrap" id="top" aria-labelledby="hero-title">
+  <div class="hero-copy" data-reveal>
+    <h1 id="hero-title" class="r">Primers that fit every strain</h1>
+    <p class="lead r">viraprime designs PCR primer pairs on the consensus of a virus family, then re-checks each pair against every sequence and ranks it by how many it really amplifies.</p>
+    <div class="actions r">
+      <a class="btn btn-accent" href="https://github.com/ValldHebron-Bioinformatics/viraprime">Get viraprime</a>
+      <a class="link-arrow" href="#start">Build your first command <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+
+  <div class="cov" data-ui data-strand="fwd" id="coverage" data-reveal>
+    <div class="cov-head r">
+      <p class="cov-title">Coverage check <span>· example family, 10 sequences</span></p>
+      <div class="seg" role="group" aria-label="Target region">
+        <button type="button" aria-pressed="true" data-region="cons">cons 61–540</button>
+        <button type="button" aria-pressed="false" data-region="hv">hv 701–1100</button>
+      </div>
+    </div>
+    <div class="cov-controls r">
+      <label class="ctl"><span>Max mismatches</span>
+        <input type="range" min="0" max="4" step="1" value="2" id="mm">
+        <output id="mm-out" for="mm">2</output></label>
+      <label class="ctl"><span>3′ window</span>
+        <input type="range" min="1" max="8" step="1" value="5" id="win">
+        <output id="win-out" for="win">5</output></label>
+      <p class="cov-score" aria-live="polite"><strong id="cov-pct">100%</strong> <span id="cov-n">10 of 10 amplified</span></p>
+    </div>
+    <div class="seg strand r" role="group" aria-label="Primer shown">
+      <button type="button" aria-pressed="true" data-strand="fwd">Forward</button>
+      <button type="button" aria-pressed="false" data-strand="rev">Reverse</button>
+    </div>
+    <div class="cov-scroll r">
+      <table class="cov-table">
+        <thead>
+          <tr><th scope="col">Sequence</th><th scope="col" class="c-fwd">Forward <span>3′ on the right</span></th><th scope="col" class="c-rev">Reverse site <span>3′ on the left</span></th><th scope="col">Result</th></tr>
+        </thead>
+        <tbody id="cov-body">
+          <tr><td colspan="4">Rank-1 pair of the example run. Turn on JavaScript to re-score it live.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- Why: the problem, in the subject's own pictures -->
+<section class="why wrap" aria-labelledby="why-title">
+  <figure class="fade" data-reveal>
+    <div class="fade-stack r">
+      <img src="img/h1n1.webp" width="1400" height="1105" alt="Influenza A H1N1 virus particles, coloured blue, in a transmission electron micrograph" class="on" loading="lazy" decoding="async">
+      <img src="img/h5n1.webp" width="1400" height="1154" alt="Avian influenza A H5N1 particles, gold, inside cultured cells" loading="lazy" decoding="async">
+      <img src="img/sarscov2.webp" width="1400" height="1400" alt="SARS-CoV-2 particles, red, inside an infected cell" loading="lazy" decoding="async">
+      <img src="img/mers.webp" width="1400" height="1248" alt="MERS coronavirus particles, green, on the surface of a cell" loading="lazy" decoding="async">
+    </div>
+    <figcaption class="r cap-row"><span id="fade-cap">Influenza A H1N1, transmission electron micrograph</span><button type="button" class="motion-btn" data-motion="fade" aria-pressed="false">Pause</button></figcaption>
+  </figure>
+  <div class="why-copy" data-reveal>
+    <h2 id="why-title" class="r">One reference is not the family</h2>
+    <p class="r">A primer copied from a single genome can fail on the strain in the next sample. viraprime starts from all of them: it aligns your sequences, takes the majority base at every column, and keeps only the pairs that still bind when each strain is tested on its own.</p>
+    <dl class="facts r">
+      <div><dt>802 of 1,202</dt><dd>alignment columns fully conserved in the example family</dd></div>
+      <div><dt>100% vs 30%</dt><dd>best coverage in its conserved and hypervariable regions</dd></div>
+    </dl>
+  </div>
+</section>
+
+<!-- How it works: one slider, four stages -->
+<section class="how" id="how" aria-labelledby="how-title">
+  <div class="how-fields">
+    <div class="how-clause" data-reveal>
+      <h2 id="how-title" class="how-head r">How it works</h2>
+      <p class="clause r" id="clause" aria-live="polite">First, line up every sequence</p>
+      <p class="clause-note r" id="clause-note">MAFFT or MUSCLE 5 aligns the family. Sequences far from the median length are dropped before they can skew it.</p>
+    </div>
+    <div class="how-stage">
+      <div class="frag" data-ui id="stage-frag"></div>
+    </div>
+  </div>
+  <div class="how-rail wrap">
+    <label for="stage" class="sr-only">Pipeline stage</label>
+    <div class="rail"><span class="rail-track"></span><span class="rail-fill" id="rail-fill"></span>
+      <input type="range" id="stage" min="0" max="3" step="1" value="0" aria-valuetext="Align"></div>
+    <ol class="stops">
+      <li><button type="button" data-stop="0" aria-current="step">Align</button></li>
+      <li><button type="button" data-stop="1">Consensus</button></li>
+      <li><button type="button" data-stop="2">Design</button></li>
+      <li><button type="button" data-stop="3">Re-check</button></li>
+    </ol>
+  </div>
+</section>
+
+<!-- Outputs: the files a run writes -->
+<section class="outputs wrap" id="outputs" aria-labelledby="out-title">
+  <div class="out-list" data-reveal>
+    <h2 id="out-title" class="r">What a run writes</h2>
+    <ul class="r" role="list">
+      <li><button type="button" class="out-name" data-sheet="tsv" aria-pressed="true">primers.tsv</button></li>
+      <li><button type="button" class="out-name" data-sheet="report" aria-pressed="false">report.txt</button></li>
+      <li><button type="button" class="out-name" data-sheet="fasta" aria-pressed="false">alignment.fasta</button></li>
+      <li><button type="button" class="out-name" data-sheet="exit" aria-pressed="false">Exit code</button></li>
+    </ul>
+    <p class="out-note r" id="out-note">One row per reported pair: both sequences, Tm, GC, amplicon coordinates on your reference, coverage, and which strains it misses and why.</p>
+  </div>
+  <div class="out-stage">
+    <div class="sheet" data-ui id="sheet"></div>
+  </div>
+</section>
+
+<!-- Bench: where the table goes next -->
+<section class="bench wrap" aria-labelledby="bench-title">
+  <div class="bench-copy" data-reveal>
+    <h2 id="bench-title" class="r">The table is the order form</h2>
+    <p class="r">Rank 1 is the pair that covers the most strains, with the lowest primer3 penalty among them. Send both sequences to synthesis as they are; degenerate positions are already written in IUPAC code with their Tm range.</p>
+  </div>
+  <figure class="bench-v" data-reveal>
+    <video class="r" src="img/pipette.webm" poster="img/pipette.webp" width="608" height="1080" muted loop playsinline preload="none" aria-label="A gloved hand mixing a reaction in a microcentrifuge tube with a pipette"></video>
+    <figcaption class="r cap-row"><span>The reaction is mixed by pipette.</span><button type="button" class="motion-btn" data-motion="clip" aria-pressed="false">Pause</button></figcaption>
+  </figure>
+  <figure class="bench-a" data-reveal>
+    <img class="r" src="img/cycler.webp" width="1050" height="1400" alt="A benchtop thermal cycler with its lid open and a strip of PCR tubes in the block" loading="lazy" decoding="async">
+    <figcaption class="r">A thermal cycler runs the PCR.</figcaption>
+  </figure>
+  <figure class="bench-b" data-reveal>
+    <img class="r" src="img/gel.webp" width="1400" height="1050" alt="Agarose gel under UV light with a size ladder and bright DNA bands in five lanes" loading="lazy" decoding="async">
+    <figcaption class="r">One band per lane, at the amplicon length the TSV gives.</figcaption>
+  </figure>
+</section>
+
+<!-- Options: the CLI as a command list -->
+<section class="options wrap" id="options" aria-labelledby="opt-title">
+  <h2 id="opt-title"><label for="opt-q">Find an option</label></h2>
+  <div data-ui class="opt-ui">
+    <input type="search" id="opt-q" class="opt-q" placeholder="degenerate, region, Tm…" autocomplete="off" spellcheck="false" aria-controls="opt-list">
+    <ul class="opt-list" id="opt-list" role="list">
+      <li><button type="button" aria-expanded="true"><span class="opt-name">Degenerate bases</span><code translate="no">--allow-degenerate</code></button>
+        <p>Adds IUPAC codes one position at a time where strains differ, keeping each primer at 8-fold or less and never touching the 3′-terminal base.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="opt-name">Strict 3′ end</span><code translate="no">--three-prime-window 5</code></button>
+        <p>No mismatch is allowed in the last five bases, where the polymerase starts extending. A miss there fails the sequence outright.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="opt-name">Mismatch budget</span><code translate="no">--max-mismatches 2</code></button>
+        <p>Up to two mismatches per primer elsewhere. Gaps, Ns, ambiguous bases and extra bases in the sequence each count as one.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="opt-name">Named regions</span><code translate="no">--region cons:61-540</code></button>
+        <p>Design several targets in one run on 1-based reference coordinates, or load them from a tab-separated file with --regions-file.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="opt-name">Coverage threshold</span><code translate="no">--min-coverage 95</code></button>
+        <p>A region passes when one pair amplifies at least 95% of the sequences. If none does, the best pairs are still reported and the run exits with code 2.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="opt-name">Length outliers</span><code translate="no">--outlier-action drop</code></button>
+        <p>Sequences more than 10% away from the median length are dropped, kept with a warning, or stop the run.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="opt-name">Your own alignment</span><code translate="no">--aligned</code></button>
+        <p>Pass a pre-aligned FASTA and skip MAFFT or MUSCLE entirely.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="opt-name">Primer chemistry</span><code translate="no">--tm-opt 60</code></button>
+        <p>Tm 57–63 °C and within 2 °C inside a pair, 18–25 bases, 40–60% GC. Every limit has its own flag.</p></li>
+    </ul>
+    <p class="opt-empty" id="opt-empty" hidden>No option matches that. Try “Tm” or “region”.</p>
+  </div>
+</section>
+
+<!-- Built on -->
+<section class="built wrap" aria-labelledby="built-title">
+  <h2 id="built-title">Built on</h2>
+  <ul role="list">
+    <li><a href="https://primer3.org">primer3</a></li>
+    <li><a href="https://mafft.cbrc.jp/alignment/software/">MAFFT</a></li>
+    <li><a href="https://www.drive5.com/muscle/">MUSCLE 5</a></li>
+    <li><a href="https://biopython.org">Biopython</a></li>
+    <li><a href="https://www.python.org">Python 3.10+</a></li>
+  </ul>
+</section>
+
+<!-- FAQ -->
+<section class="faq wrap" id="faq" aria-labelledby="faq-title">
+  <div class="faq-list">
+    <h2 id="faq-title">Common questions</h2>
+    <ul role="list" id="faq-q">
+      <li><button type="button" aria-expanded="true" aria-controls="a1">Why not run primer3 on the consensus and stop there?</button>
+        <p id="a1">A consensus is a sequence that may exist in no real sample. A pair that fits it can still miss several strains, often right at its 3′ end. viraprime keeps primer3’s design and judges every pair on the real sequences.</p></li>
+      <li><button type="button" aria-expanded="false" aria-controls="a2">What counts as a mismatch?</button>
+        <p id="a2">A different base, a gap, an N or any ambiguous base in the sequence, and every base the sequence has in addition to the primer. A degenerate primer base matches each base it stands for.</p></li>
+      <li><button type="button" aria-expanded="false" aria-controls="a3">What does exit code 2 mean?</button>
+        <p id="a3">The run finished and wrote every file, but at least one region had no pair reaching the coverage threshold. Its best pairs are flagged below_threshold and report.txt counts why they miss.</p></li>
+      <li><button type="button" aria-expanded="false" aria-controls="a4">Can I bring my own alignment?</button>
+        <p id="a4">Yes. Pass it with --aligned and the aligner step is skipped, so neither MAFFT nor MUSCLE needs to be installed.</p></li>
+      <li><button type="button" aria-expanded="false" aria-controls="a5">Which coordinates do regions use?</button>
+        <p id="a5">1-based, inclusive positions on the reference sequence: the first one in the file, unless you name another with --reference-id. They are mapped to alignment columns for you.</p></li>
+      <li><button type="button" aria-expanded="false" aria-controls="a6">How is a degenerate base chosen?</button>
+        <p id="a6">One position at a time: the change that rescues the most sequences wins, then the one removing the most mismatches, then the one farthest from the 3′ end. Changes that rescue nothing are undone.</p></li>
+      <li><button type="button" aria-expanded="false" aria-controls="a7">What do I need installed?</button>
+        <p id="a7">Python 3.10 or later, Biopython, primer3-py 2, and MAFFT or MUSCLE 5 on your PATH. The README has a one-line conda command for all of it.</p></li>
+    </ul>
+  </div>
+  <div class="faq-pane"><p id="faq-pane" aria-live="polite"></p></div>
+</section>
+
+<!-- CTA: the first run, already open -->
+<section class="start" id="start" aria-labelledby="start-title">
+  <div class="start-in wrap">
+    <div class="start-copy" data-reveal>
+      <h2 id="start-title" class="r">Start with your FASTA</h2>
+      <p class="r">Fill in the run, copy the command, and the alignment, the primer table and the report land in the folder you name.</p>
+    </div>
+    <form class="dialog" data-ui id="builder" aria-labelledby="dlg-title" novalidate>
+      <p class="dlg-title" id="dlg-title">New run</p>
+      <div class="dlg-grid">
+        <label class="fld fld-wide"><span>Input FASTA</span><input name="input" value="examples/family.fasta" autocomplete="off" spellcheck="false"></label>
+        <label class="fld"><span>Output folder</span><input name="out" value="out" autocomplete="off" spellcheck="false"></label>
+        <label class="fld"><span>Regions</span><input name="regions" value="cons:61-540 hv:701-1100" autocomplete="off" spellcheck="false" aria-describedby="reg-hint"></label>
+        <p class="hint fld-wide" id="reg-hint">NAME:START-END on the reference, separated by spaces. Leave empty for the whole genome.</p>
+        <label class="fld"><span>Amplicon min (bp)</span><input name="amin" type="number" inputmode="numeric" autocomplete="off" min="1" value="100"></label>
+        <label class="fld"><span>Amplicon max (bp)</span><input name="amax" type="number" inputmode="numeric" autocomplete="off" min="1" value="300"></label>
+        <fieldset class="fld"><legend>Aligner</legend>
+          <div class="seg"><button type="button" aria-pressed="true" data-aligner="mafft">MAFFT</button><button type="button" aria-pressed="false" data-aligner="muscle">MUSCLE</button></div>
+        </fieldset>
+        <label class="chk"><input type="checkbox" name="deg" checked> Allow degenerate bases</label>
+      </div>
+      <pre class="cmd"><code translate="no" id="cmd">viraprime -i examples/family.fasta -o out --region cons:61-540 --region hv:701-1100 --amplicon-min 100 --amplicon-max 300 --allow-degenerate</code></pre>
+      <p class="dlg-err" id="dlg-err" role="alert"></p>
+      <div class="dlg-actions">
+        <button type="submit" class="btn btn-ink" id="copy">Copy command</button>
+        <span class="copied" id="copied" aria-live="polite"></span>
+      </div>
+    </form>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot wrap">
+  <p>viraprime: consensus PCR primers</p>
+  <ul role="list">
+    <li><a href="https://github.com/ValldHebron-Bioinformatics/viraprime">GitHub</a></li>
+    <li><a href="https://github.com/ValldHebron-Bioinformatics/viraprime#readme">README</a></li>
+    <li><a href="https://github.com/ValldHebron-Bioinformatics/viraprime/issues">Issues</a></li>
+  </ul>
+  <p class="foot-r">2026 · Vall d’Hebron Bioinformatics</p>
+  <p class="credits">Pictures and clip via Wikimedia Commons: <a href="https://commons.wikimedia.org/wiki/File:Influenza_A_Virus_(H1N1)-1.jpg">Influenza A Virus (H1N1)</a> by NIH Image Gallery, public domain; <a href="https://commons.wikimedia.org/wiki/File:Colorized_transmission_electron_micrograph_of_Avian_influenza_A_H5N1_viruses.jpg">Avian influenza A H5N1</a> by Cynthia Goldsmith, CDC, public domain; <a href="https://commons.wikimedia.org/wiki/File:Novel_Coronavirus_SARS-CoV-2_(49597020718).jpg">Novel Coronavirus SARS-CoV-2</a> by NIAID, <a href="https://creativecommons.org/licenses/by/2.0">CC BY 2.0</a>; <a href="https://commons.wikimedia.org/wiki/File:MERS_Coronavirus_Particles.jpg">MERS Coronavirus Particles</a> by NIAID, public domain; <a href="https://commons.wikimedia.org/wiki/File:Thermal_cycler_for_PCR.jpg">Thermal cycler for PCR</a> by Juan Carlos Fonseca Mata, <a href="https://creativecommons.org/licenses/by-sa/4.0">CC BY-SA 4.0</a>; <a href="https://commons.wikimedia.org/wiki/File:Gel_electrophoresis_2.jpg">Gel electrophoresis 2</a> by Mnolf, <a href="https://creativecommons.org/licenses/by-sa/3.0/">CC BY-SA 3.0</a>. Clip: <a href="https://commons.wikimedia.org/wiki/File:Pipette_mixing_technique.webm">Pipette mixing technique</a> by Cirosantilli2, <a href="https://creativecommons.org/licenses/by-sa/4.0">CC BY-SA 4.0</a>.</p>
+</footer>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
