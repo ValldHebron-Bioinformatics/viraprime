@@ -58,3 +58,24 @@ class ColumnStats:
 class Consensus:
     seq: str
     cons_to_col: list[int]
+
+
+@dataclass(frozen=True)
+class ScoringParams:
+    max_mismatches: int
+    window: int
+
+
+@dataclass(frozen=True)
+class MatchResult:
+    ok: bool
+    mismatches: int
+    three_prime_mismatches: int
+    reason: str | None
+
+
+@dataclass
+class PairCoverage:
+    covered: list[str]
+    not_covered: dict[str, str]
+    coverage_pct: float
