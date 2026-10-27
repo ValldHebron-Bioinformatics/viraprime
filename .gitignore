@@ -4,3 +4,12 @@ __pycache__/
 out*/
 examples/family.fasta
 .superpowers/
+# Playwright CLI output (may contain credentials)
+.playwright-cli/
+# Local design and video work
+.taste-skill/
+brag-output/
+site/assets/
+# Local Claude Code / skills setup
+.claude/
+skills-lock.json
