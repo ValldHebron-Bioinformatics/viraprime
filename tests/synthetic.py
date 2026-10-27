@@ -46,3 +46,19 @@ def make_family(seed: int = 42) -> tuple[str, list[tuple[str, str]]]:
 def write_fasta(path: Path, records: list[tuple[str, str]]) -> Path:
     path.write_text("".join(f">{rid}\n{seq}\n" for rid, seq in records))
     return path
+
+
+def make_aligned_family(seed: int = 42) -> list[tuple[str, str]]:
+    """make_family as a gapped alignment, so tests can use --aligned without MAFFT.
+
+    seq03's 3-base deletion (base positions 30-32) becomes gaps, and every
+    sequence except seq05 gets a 2-column gap where seq05 has its insertion.
+    """
+    rows = []
+    for rid, seq in make_family(seed)[1]:
+        if rid == "seq03":
+            seq = seq[:29] + "---" + seq[29:]
+        if rid != "seq05":
+            seq = seq[:570] + "--" + seq[570:]
+        rows.append((rid, seq))
+    return rows

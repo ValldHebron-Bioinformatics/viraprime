@@ -7,12 +7,14 @@ import logging
 import shlex
 import statistics
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
 from Bio.Seq import reverse_complement
 
 from viraprime.align import run_aligner
+from viraprime.check import check_assay, load_assays
 from viraprime.conservation import build_consensus, score_columns
 from viraprime.coords import CoordMap
 from viraprime.degenerate import degenerate_pair, tm_range
@@ -21,6 +23,8 @@ from viraprime.io import (
     alignment_from_records,
     load_fasta,
     write_alignment,
+    write_check_report,
+    write_check_tsv,
     write_report,
     write_tsv,
 )
@@ -28,9 +32,13 @@ from viraprime.lengths import filter_by_length, ungapped_length
 from viraprime.models import (
     Alignment,
     CandidatePair,
+    CheckReport,
+    ColumnStats,
     Consensus,
     DesignParams,
+    LengthFilterResult,
     PipelineError,
+    Record,
     Region,
     RegionResult,
     RunReport,
@@ -67,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = _Parser(
         prog="viraprime",
         description="Design consensus PCR primers from a multi-FASTA of related sequences.",
+        epilog="To test primer pairs you already have: viraprime check --help",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     src = p.add_mutually_exclusive_group(required=True)
@@ -199,8 +208,25 @@ def _design_region(
     return RegionResult(region, included, len(design.pairs), n_passing, ranked, design.explain, failures)
 
 
-def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
-    check_params(a)
+@dataclass
+class _Inputs:
+    records: list[Record]
+    lengths: list[int]
+    lf: LengthFilterResult
+    reference_id: str
+    ref_len: int
+
+
+@dataclass
+class _Aligned:
+    aln: Alignment
+    stats: list[ColumnStats]
+    cons: Consensus
+    cmap: CoordMap
+
+
+def _load_inputs(a: argparse.Namespace) -> _Inputs:
+    """Load and validate the input, filter by length and pick the reference."""
     if a.input is not None:
         records = load_fasta(a.input)
     else:
@@ -208,20 +234,32 @@ def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
         alignment_from_records(records)  # validates equal row lengths
     if a.reference_id is not None and a.reference_id not in {r.id for r in records}:
         raise PipelineError(f"--reference-id '{a.reference_id}' is not in the input")
-
     lengths = [ungapped_length(r.seq) for r in records]
     lf = filter_by_length(records, a.length_tolerance, a.outlier_action, a.reference_id)
     # default reference: first sequence left after length filtering
     reference_id = a.reference_id or lf.kept[0].id
     ref_len = ungapped_length(next(r.seq for r in lf.kept if r.id == reference_id))
-    regions = resolve_regions(a.region, a.regions_file, ref_len)
-    aln = run_aligner(lf.kept, a.aligner) if a.input is not None else alignment_from_records(lf.kept)
+    return _Inputs(records, lengths, lf, reference_id, ref_len)
+
+
+def _align_inputs(a: argparse.Namespace, inp: _Inputs) -> _Aligned:
+    """Align (or take the given alignment), write it, and build consensus and coordinates."""
+    kept = inp.lf.kept
+    aln = run_aligner(kept, a.aligner) if a.input is not None else alignment_from_records(kept)
     a.outdir.mkdir(parents=True, exist_ok=True)
     write_alignment(aln, a.outdir / "alignment.fasta")
-
     stats = score_columns(aln)
     cons = build_consensus(stats)
-    cmap = CoordMap(aln, reference_id, cons)
+    return _Aligned(aln, stats, cons, CoordMap(aln, inp.reference_id, cons))
+
+
+def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
+    check_params(a)
+    inp = _load_inputs(a)
+    regions = resolve_regions(a.region, a.regions_file, inp.ref_len)
+    al = _align_inputs(a, inp)
+    records, lengths, lf, reference_id = inp.records, inp.lengths, inp.lf, inp.reference_id
+    aln, stats, cons, cmap = al.aln, al.stats, al.cons, al.cmap
     # validate every region (incl. its consensus length) before any primer design
     included: dict[str, tuple[int, int]] = {}
     for region in regions:
@@ -261,9 +299,84 @@ def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
     return EXIT_BELOW_THRESHOLD if failed else EXIT_OK
 
 
+def build_check_parser() -> argparse.ArgumentParser:
+    p = _Parser(
+        prog="viraprime check",
+        description="Check primer pairs you already have against every sequence of a family.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("-i", "--input", type=Path, help="multi-FASTA of unaligned sequences")
+    src.add_argument("--aligned", type=Path, help="pre-aligned FASTA (skips the alignment step)")
+    p.add_argument("--primers", type=Path, required=True,
+                   help="TSV with columns name, forward, reverse (5'->3', IUPAC allowed)")
+    p.add_argument("-o", "--outdir", type=Path, required=True, help="output directory")
+    p.add_argument("--aligner", choices=["mafft", "muscle"], default="mafft")
+    p.add_argument("--reference-id", help="reference for coordinates (default: first sequence)")
+    p.add_argument("--length-tolerance", type=float, default=0.10,
+                   help="allowed deviation from the median length, as a fraction")
+    p.add_argument("--outlier-action", choices=["warn", "drop", "abort"], default="drop")
+    p.add_argument("--max-mismatches", type=int, default=2, help="max mismatches per primer")
+    p.add_argument("--three-prime-window", type=int, default=5,
+                   help="3' bases that must match exactly")
+    p.add_argument("--min-coverage", type=float, default=95.0, help="minimum coverage (%%)")
+    p.add_argument("-v", "--verbose", action="store_true", help="debug logging and tracebacks")
+    return p
+
+
+def check_check_params(a: argparse.Namespace) -> None:
+    problems: list[str] = []
+    if a.max_mismatches < 0:
+        problems.append("--max-mismatches must be >= 0")
+    if a.three_prime_window < 1:
+        problems.append("--three-prime-window must be >= 1")
+    if not 0 <= a.min_coverage <= 100:
+        problems.append("--min-coverage must be between 0 and 100")
+    if a.length_tolerance <= 0:
+        problems.append("--length-tolerance must be > 0")
+    if problems:
+        raise PipelineError("Invalid parameters: " + "; ".join(problems))
+
+
+def run_check(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
+    check_check_params(a)
+    inp = _load_inputs(a)
+    assays = load_assays(a.primers, a.three_prime_window)  # before alignment: fail fast
+    al = _align_inputs(a, inp)
+    sparams = ScoringParams(a.max_mismatches, a.three_prime_window)
+    results = [check_assay(x, al.aln, al.cons, sparams, a.min_coverage) for x in assays]
+    for res in results:
+        if not res.located:
+            log.warning("Pair %s: not located (%s)", res.assay.name, res.note)
+        else:
+            log.info("Pair %s: %.1f%% coverage", res.assay.name, res.coverage.coverage_pct)
+    write_check_tsv(results, al.cmap, a.outdir / "check.tsv")
+    low = [r.assay.name for r in results if r.below_threshold]
+    if low:
+        log.warning("Pairs below --min-coverage: %s", ", ".join(low))
+    params = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(a).items()}
+    report = CheckReport(
+        command=command, params=params, n_input=len(inp.records),
+        median_len=float(statistics.median(inp.lengths)), min_len=min(inp.lengths),
+        max_len=max(inp.lengths), length=inp.lf, reference_id=inp.reference_id,
+        aln_length=al.aln.length, cons_length=len(al.cons.seq),
+        n_conserved=sum(1 for s in al.stats if s.majority_freq == 1.0),
+        mean_conservation=statistics.fmean(s.majority_freq for s in al.stats),
+        min_coverage=a.min_coverage, results=results, log_lines=log_lines,
+    )
+    write_check_report(report, al.cmap, a.outdir / "report.txt")
+    log.info("Wrote results to %s", a.outdir)
+    return EXIT_BELOW_THRESHOLD if low else EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    args = build_parser().parse_args(argv)
+    if argv[:1] == ["check"]:
+        args = build_check_parser().parse_args(argv[1:])
+        runner, command = run_check, "viraprime check " + shlex.join(argv[1:])
+    else:
+        args = build_parser().parse_args(argv)
+        runner, command = run, "viraprime " + shlex.join(argv)
 
     fmt = logging.Formatter("%(levelname)s: %(message)s")
     stderr_handler = logging.StreamHandler(sys.stderr)
@@ -274,7 +387,7 @@ def main(argv: list[str] | None = None) -> int:
     log.setLevel(logging.DEBUG if args.verbose else logging.INFO)
     log.propagate = False
     try:
-        return run(args, "viraprime " + shlex.join(argv), memory.lines)
+        return runner(args, command, memory.lines)
     except PipelineError as exc:
         log.error("%s", exc)
         if args.verbose:

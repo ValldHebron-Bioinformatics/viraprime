@@ -165,3 +165,59 @@ class RunReport:
     min_coverage: float
     regions: list[RegionResult]
     log_lines: list[str]
+
+
+@dataclass(frozen=True)
+class Assay:
+    """A primer pair to check, both oligos written 5'->3' (upper-case, U as T)."""
+
+    name: str
+    forward: str
+    reverse: str
+
+
+@dataclass(frozen=True)
+class Location:
+    """Best binding site of a primer on the consensus (0-based start)."""
+
+    start: int
+    mismatches: int
+
+
+@dataclass
+class CheckResult:
+    assay: Assay
+    located: bool
+    note: str
+    fwd: Location | None
+    rev: Location | None
+    fwd_cols: list[int]
+    rev_cols: list[int]
+    coverage: PairCoverage
+    fwd_tm: float | None
+    rev_tm: float | None
+    fwd_tm_range: tuple[float, float] | None
+    rev_tm_range: tuple[float, float] | None
+    fwd_gc: float
+    rev_gc: float
+    degenerate: bool
+    below_threshold: bool
+
+
+@dataclass
+class CheckReport:
+    command: str
+    params: dict[str, object]
+    n_input: int
+    median_len: float
+    min_len: int
+    max_len: int
+    length: LengthFilterResult
+    reference_id: str
+    aln_length: int
+    cons_length: int
+    n_conserved: int
+    mean_conservation: float
+    min_coverage: float
+    results: list[CheckResult]
+    log_lines: list[str]

@@ -25,7 +25,12 @@ def failure_summary(scored: list[ScoredPair]) -> list[tuple[str, int]]:
     if not scored:
         return []
     best = min(scored, key=_sort_key)
+    return count_reasons(best.coverage.not_covered)
+
+
+def count_reasons(not_covered: dict[str, str]) -> list[tuple[str, int]]:
+    """How often each failure reason occurs, most common first."""
     counts: Counter[str] = Counter()
-    for reason in best.coverage.not_covered.values():
+    for reason in not_covered.values():
         counts.update(part.strip() for part in reason.split(";"))
     return counts.most_common()
