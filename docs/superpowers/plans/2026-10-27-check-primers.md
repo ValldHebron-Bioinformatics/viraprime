@@ -42,6 +42,7 @@
 - Modify `tests/synthetic.py`: `make_aligned_family`.
 - Create `tests/test_check.py` (units), `tests/test_check_cli.py` (CLI/e2e).
 - Modify `README.md`.
+- Modify `site/index.html`, `site/app.js`, `site/style.css` (Task 7).
 
 ---
 
@@ -246,3 +247,28 @@ Fixture for this task: a hand-built alignment (6 rows × 140 columns from a seed
 
 - [ ] **Step 3: Commit**
   `git add README.md && git commit -m "docs: viraprime check usage"`
+
+---
+
+### Task 7: Mention `check` on the website
+
+**Files:**
+- Modify: `site/index.html` (options list, FAQ list, builder form), `site/app.js` (builder), `site/style.css` only if the switch needs it.
+
+**Interfaces:**
+- Consumes: nothing from Python; copy and command shape from the spec's Website section.
+- Produces: builder mode state `mode: "design" | "check"`; `build()` emits `viraprime check -i <input> --primers <primers> -o <out>` plus `--aligner muscle` when chosen. Fields hidden in check mode get the `hidden` attribute and are skipped by validation.
+
+- [ ] **Step 1: Options row** — new `<li>` after "Your own alignment", same markup as its siblings: name `Check existing primers`, `<code translate="no">viraprime check --primers assays.tsv</code>`, sentence from the spec. Confirm the search box finds it with "check" and "existing".
+
+- [ ] **Step 2: FAQ entry** — new `<li>` after "Can I bring my own alignment?" with `aria-controls="a8"` and the spec's question and answer.
+
+- [ ] **Step 3: Builder switch** — `.seg` group `role="group" aria-label="Run type"` with buttons `Design` / `Check` (`aria-pressed`, `data-mode`) above the fields; a `Primers file` field (`name="primers"`, default `assays.tsv`, `autocomplete="off"`, `spellcheck="false"`, hidden in design mode); title text follows the mode; the hint under Regions hides with it.
+
+- [ ] **Step 4: Verify in the browser** (dev server `python3 -m http.server 5173 -d site`, playwright-cli): Check mode → command equals `viraprime check -i examples/family.fasta --primers assays.tsv -o out`; MUSCLE adds `--aligner muscle`; switching back restores the design command; an empty primers field blocks copying and focuses it; no console errors.
+
+- [ ] **Step 5: Re-run the page checks**
+  Run: `node <taste-skill>/scripts/lint.mjs site/index.html site/style.css site/app.js` and `node <taste-skill>/scripts/inspect.mjs http://127.0.0.1:5173/` → 0 FAIL; take desktop and phone screenshots with playwright-cli and review the changed parts against the web-design-guidelines rules; fix findings.
+
+- [ ] **Step 6: Commit**
+  `git add site && git commit -m "feat(site): mention viraprime check (options, FAQ, command builder)"`

@@ -145,6 +145,24 @@ Errors (exit 1), each naming the file and line:
 - `README.md`: a "Checking existing primers" section with an example file
   and command.
 
+## Website (`site/`)
+
+The landing page mentions the new mode; it does not run checks in the browser.
+
+- Options list: a row **Check existing primers** with code
+  `viraprime check --primers assays.tsv`; its sentence: "Test published or
+  earlier assays against your sequences with the same rules, without
+  designing new ones. Each pair gets a row in check.tsv."
+- FAQ: **Can I test primers I already have?** Answer: "Yes. List them as
+  name, forward and reverse in a tab-separated file and run viraprime check.
+  Each pair is found on the consensus and scored on every sequence with the
+  same rules as design."
+- Command builder: a two-option switch **Design / Check** at the top of the
+  dialog. Check mode shows a "Primers file" field (default `assays.tsv`),
+  hides regions, amplicon min/max and the degenerate checkbox, and builds
+  `viraprime check -i <fasta> --primers <file> -o <out> [--aligner muscle]`.
+  The dialog title follows the mode ("New run" / "New check").
+
 ## Testing (`tests/test_check.py`, written test-first)
 
 - `load_assays`: header detected; comments and blank lines skipped;
@@ -171,4 +189,4 @@ with the README example's pairs and the outputs inspected.
 
 Probes (TaqMan) and multiplex panels; alignment-free search; per-sequence
 amplicon lengths; primer-dimer or hairpin checks; off-target specificity;
-checking primers in the web page.
+running checks in the web page.
