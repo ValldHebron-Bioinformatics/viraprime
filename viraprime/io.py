@@ -11,7 +11,16 @@ from typing import TYPE_CHECKING
 
 from Bio import SeqIO
 
-from viraprime.models import Alignment, PipelineError, Record, RegionResult, RunReport
+from viraprime.models import (
+    Alignment,
+    CheckReport,
+    CheckResult,
+    PipelineError,
+    Record,
+    RegionResult,
+    RunReport,
+)
+from viraprime.ranking import count_reasons
 
 if TYPE_CHECKING:
     from viraprime.coords import CoordMap
@@ -140,9 +149,10 @@ def _region_section(res: RegionResult, min_coverage: float) -> list[str]:
     return lines
 
 
-def write_report(report: RunReport, path: Path) -> None:
+def _header_lines(report: RunReport | CheckReport, title: str) -> list[str]:
+    """Title, command, parameters, input and alignment blocks shared by both reports."""
     lf = report.length
-    out = ["viraprime report", "=" * 24,
+    out = [title, "=" * 24,
            f"Date: {datetime.now().isoformat(timespec='seconds')}",
            f"Command: {report.command}", "",
            "Parameters", "----------"]
@@ -162,6 +172,11 @@ def write_report(report: RunReport, path: Path) -> None:
             f"Consensus length: {report.cons_length}",
             f"Fully conserved columns: {report.n_conserved}",
             f"Mean majority-base frequency: {report.mean_conservation:.3f}", ""]
+    return out
+
+
+def write_report(report: RunReport, path: Path) -> None:
+    out = _header_lines(report, "viraprime report")
     for res in report.regions:
         out += _region_section(res, report.min_coverage) + [""]
     failed = [res.region.name for res in report.regions if res.rank.below_threshold]
@@ -173,5 +188,85 @@ def write_report(report: RunReport, path: Path) -> None:
         )
     else:
         out.append("Every region has at least one pair meeting --min-coverage.")
+    out += ["", "Log", "---", *report.log_lines]
+    Path(path).write_text("\n".join(out) + "\n")
+
+
+CHECK_TSV_COLUMNS = [
+    "name", "forward_seq", "reverse_seq", "forward_tm", "reverse_tm", "forward_gc",
+    "reverse_gc", "forward_len", "reverse_len", "degenerate", "forward_tm_range",
+    "reverse_tm_range", "located", "forward_site_mismatches", "reverse_site_mismatches",
+    "amplicon_start", "amplicon_end", "amplicon_len", "coverage_pct", "n_covered",
+    "n_total", "below_threshold", "not_covered", "note",
+]
+
+
+def _fmt_tm(tm: float | None) -> str:
+    return f"{tm:.1f}" if tm is not None else ""
+
+
+def _amplicon(res: CheckResult, cmap: CoordMap) -> tuple[int, int] | None:
+    if not res.located:
+        return None
+    return cmap.col_to_ref(res.fwd_cols[0], "start"), cmap.col_to_ref(res.rev_cols[-1], "end")
+
+
+def write_check_tsv(results: list[CheckResult], cmap: CoordMap, path: Path) -> None:
+    """One row per checked pair, in input order."""
+    with Path(path).open("w", newline="") as fh:
+        writer = csv.writer(fh, delimiter="\t", lineterminator="\n")
+        writer.writerow(CHECK_TSV_COLUMNS)
+        for res in results:
+            a, cov = res.assay, res.coverage
+            amp = _amplicon(res, cmap)
+            writer.writerow([
+                a.name, a.forward, a.reverse, _fmt_tm(res.fwd_tm), _fmt_tm(res.rev_tm),
+                f"{res.fwd_gc:.1f}", f"{res.rev_gc:.1f}", len(a.forward), len(a.reverse),
+                res.degenerate, _fmt_range(res.fwd_tm_range), _fmt_range(res.rev_tm_range),
+                res.located,
+                res.fwd.mismatches if res.located else "", res.rev.mismatches if res.located else "",
+                *(amp + (amp[1] - amp[0] + 1,) if amp else ("", "", "")),
+                f"{cov.coverage_pct:.1f}", len(cov.covered), len(cov.covered) + len(cov.not_covered),
+                res.below_threshold,
+                ",".join(f"{sid}({why})" for sid, why in cov.not_covered.items()),
+                res.note,
+            ])
+
+
+def _pair_section(res: CheckResult, cmap: CoordMap) -> list[str]:
+    a, cov = res.assay, res.coverage
+    title = f"Pair {a.name}"
+    n_total = len(cov.covered) + len(cov.not_covered)
+    lines = [title, "-" * len(title), f"Forward: {a.forward}", f"Reverse: {a.reverse}"]
+    if res.located:
+        f0, r0 = res.fwd.start, res.rev.start
+        start, end = _amplicon(res, cmap)
+        lines += [
+            f"Consensus positions: forward {f0 + 1}-{f0 + len(a.forward)}, "
+            f"reverse {r0 + 1}-{r0 + len(a.reverse)}",
+            f"Amplicon on the reference: {start}-{end} ({end - start + 1} bp)",
+            f"Consensus mismatches: forward {res.fwd.mismatches}, reverse {res.rev.mismatches}",
+        ]
+    else:
+        lines.append(f"Not located: {res.note}")
+    lines.append(f"Coverage: {cov.coverage_pct:.1f}% ({len(cov.covered)} of {n_total})")
+    if res.located and res.note:
+        lines.append(f"Note: {res.note}")
+    if res.below_threshold and cov.not_covered:
+        lines.append("Why it misses sequences (count of uncovered sequences):")
+        lines += [f"  {reason}: {n}" for reason, n in count_reasons(cov.not_covered)]
+    return lines
+
+
+def write_check_report(report: CheckReport, cmap: CoordMap, path: Path) -> None:
+    out = _header_lines(report, "viraprime check report")
+    for res in report.results:
+        out += _pair_section(res, cmap) + [""]
+    low = [res.assay.name for res in report.results if res.below_threshold]
+    out += ["Summary", "-------"]
+    if low:
+        out.append(f"Pairs below --min-coverage ({report.min_coverage:g}%): " + ", ".join(low))
+    else:
+        out.append("Every pair meets --min-coverage.")
     out += ["", "Log", "---", *report.log_lines]
     Path(path).write_text("\n".join(out) + "\n")

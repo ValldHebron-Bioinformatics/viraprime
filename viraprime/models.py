@@ -202,3 +202,22 @@ class CheckResult:
     rev_gc: float
     degenerate: bool
     below_threshold: bool
+
+
+@dataclass
+class CheckReport:
+    command: str
+    params: dict[str, object]
+    n_input: int
+    median_len: float
+    min_len: int
+    max_len: int
+    length: LengthFilterResult
+    reference_id: str
+    aln_length: int
+    cons_length: int
+    n_conserved: int
+    mean_conservation: float
+    min_coverage: float
+    results: list[CheckResult]
+    log_lines: list[str]

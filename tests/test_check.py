@@ -227,3 +227,94 @@ def test_check_assay_below_threshold() -> None:
     res = check_assay(Assay("P", cons.seq[10:30], reverse_complement(cons.seq[80:100])), aln, cons, PARAMS, 100)
     assert res.below_threshold is True
     assert "s3" in res.coverage.not_covered
+
+
+# ---------- outputs ----------
+
+import csv
+
+from viraprime.coords import CoordMap
+from viraprime.io import CHECK_TSV_COLUMNS, write_check_report, write_check_tsv
+from viraprime.models import CheckReport, LengthFilterResult, Record
+from viraprime.ranking import count_reasons
+
+
+def _results(aln: Alignment, cons: Consensus) -> list:
+    ok = check_assay(Assay("A1", cons.seq[10:30], reverse_complement(cons.seq[80:100])), aln, cons, PARAMS, 95)
+    bad = check_assay(Assay("A2", cons.seq[80:100], reverse_complement(cons.seq[10:30])), aln, cons, PARAMS, 95)
+    return [ok, bad]
+
+
+def _read(path: Path) -> list[dict[str, str]]:
+    with path.open() as fh:
+        return list(csv.DictReader(fh, delimiter="\t"))
+
+
+def test_count_reasons() -> None:
+    nc = {"s1": "fwd 3' mismatch; rev too many mismatches", "s2": "fwd 3' mismatch"}
+    assert count_reasons(nc) == [("fwd 3' mismatch", 2), ("rev too many mismatches", 1)]
+
+
+def test_write_check_tsv_columns(tmp_path: Path) -> None:
+    aln, cons = _family()
+    cmap = CoordMap(aln, "s0", cons)
+    ok, bad = _results(aln, cons)
+    out = tmp_path / "check.tsv"
+    write_check_tsv([ok, bad], cmap, out)
+    assert out.read_text().splitlines()[0].split("\t") == CHECK_TSV_COLUMNS
+    r_ok, r_bad = _read(out)
+    start = cmap.col_to_ref(ok.fwd_cols[0], "start")
+    end = cmap.col_to_ref(ok.rev_cols[-1], "end")
+    assert (r_ok["amplicon_start"], r_ok["amplicon_end"], r_ok["amplicon_len"]) == (
+        str(start), str(end), str(end - start + 1))
+    assert r_ok["located"] == "True" and r_ok["coverage_pct"] == "100.0" and r_ok["n_total"] == "6"
+    assert r_bad["located"] == "False" and r_bad["note"] == NOT_DOWNSTREAM_TEXT
+    assert r_bad["amplicon_start"] == r_bad["amplicon_len"] == r_bad["forward_site_mismatches"] == ""
+    assert r_bad["not_covered"].startswith("s0(not located)")
+
+
+NOT_DOWNSTREAM_TEXT = "reverse site is not downstream of forward site"
+
+
+def test_write_check_tsv_reference_gap(tmp_path: Path) -> None:
+    aln, cons = _family({0: {10: "-"}})
+    cmap = CoordMap(aln, "s0", cons)
+    ok = _results(aln, cons)[0]
+    write_check_tsv([ok], cmap, tmp_path / "c.tsv")
+    assert _read(tmp_path / "c.tsv")[0]["amplicon_start"] == "11"
+
+
+def _report(aln: Alignment, results: list, min_coverage: float = 95.0) -> CheckReport:
+    recs = [Record(i, r.replace("-", "")) for i, r in zip(aln.ids, aln.rows)]
+    return CheckReport(
+        command="viraprime check ...", params={"min_coverage": 95.0}, n_input=6,
+        median_len=140.0, min_len=140, max_len=141,
+        length=LengthFilterResult(recs, [], 140.0, "drop"), reference_id="s0",
+        aln_length=aln.length, cons_length=140, n_conserved=130, mean_conservation=0.99,
+        min_coverage=min_coverage, results=results, log_lines=["INFO: done"],
+    )
+
+
+def test_write_check_report_sections(tmp_path: Path) -> None:
+    aln, cons = _family({3: {29: "A" if _family()[1].seq[29] != "A" else "C"}})
+    cmap = CoordMap(aln, "s0", cons)
+    low = check_assay(Assay("A1", cons.seq[10:30], reverse_complement(cons.seq[80:100])), aln, cons, PARAMS, 100)
+    bad = check_assay(Assay("A2", cons.seq[80:100], reverse_complement(cons.seq[10:30])), aln, cons, PARAMS, 100)
+    out = tmp_path / "report.txt"
+    write_check_report(_report(aln, [low, bad], 100.0), cmap, out)
+    text = out.read_text()
+    assert "viraprime check report" in text
+    assert "Pair A1" in text and "Pair A2" in text
+    assert "Consensus positions: forward 11-30, reverse 81-100" in text
+    assert "Why it misses sequences" in text and "fwd 3' mismatch: 1" in text
+    assert "not located" in text and NOT_DOWNSTREAM_TEXT in text
+    assert "Pairs below --min-coverage (100%): A1, A2" in text
+    assert text.rstrip().endswith("INFO: done")
+
+
+def test_write_check_report_all_pass(tmp_path: Path) -> None:
+    aln, cons = _family()
+    cmap = CoordMap(aln, "s0", cons)
+    ok = _results(aln, cons)[0]
+    write_check_report(_report(aln, [ok]), cmap, tmp_path / "r.txt")
+    assert "Every pair meets --min-coverage." in (tmp_path / "r.txt").read_text()
