@@ -318,3 +318,50 @@ def test_write_check_report_all_pass(tmp_path: Path) -> None:
     ok = _results(aln, cons)[0]
     write_check_report(_report(aln, [ok]), cmap, tmp_path / "r.txt")
     assert "Every pair meets --min-coverage." in (tmp_path / "r.txt").read_text()
+
+
+# ---------- final-review fixes ----------
+
+from tests.synthetic import make_aligned_family
+
+
+def _aligned_family() -> tuple[Alignment, Consensus]:
+    rows = make_aligned_family()
+    aln = Alignment([i for i, _ in rows], [s for _, s in rows])
+    return aln, build_consensus(score_columns(aln))
+
+
+def test_amplicon_outside_reference_does_not_crash(tmp_path: Path) -> None:
+    aln, cons = _family({0: {p: "-" for p in range(100, 140)}})  # reference s0 ends at base 100
+    cmap = CoordMap(aln, "s0", cons)
+    res = check_assay(Assay("A1", cons.seq[102:120], reverse_complement(cons.seq[121:139])), aln, cons, PARAMS, 95)
+    assert res.located
+    write_check_tsv([res], cmap, tmp_path / "c.tsv")
+    row = _read(tmp_path / "c.tsv")[0]
+    assert row["amplicon_start"] == row["amplicon_len"] == ""
+    assert "amplicon not on reference s0" in row["note"]
+    write_check_report(_report(aln, [res]), cmap, tmp_path / "r.txt")
+    assert "amplicon not on reference s0" in (tmp_path / "r.txt").read_text()
+
+
+def test_reverse_pasted_as_its_complement_gets_orientation_note() -> None:
+    aln, cons = _aligned_family()
+    fwd, rev_site = cons.seq[100:121], cons.seq[300:321]
+    res = check_assay(Assay("P", fwd, rev_site), aln, cons, PARAMS, 95)  # should be reverse_complement(rev_site)
+    assert res.below_threshold is True
+    assert "rev primer may be written in the wrong orientation" in res.note
+    assert "ambiguous" not in res.note
+
+
+def test_no_site_within_mismatches_is_not_called_ambiguous() -> None:
+    aln, cons = _aligned_family()
+    alien = "GATTACAGATTACAGATTACA"
+    res = check_assay(Assay("P", cons.seq[100:121], alien), aln, cons, PARAMS, 95)
+    assert "ambiguous" not in res.note
+    assert "no binding site for rev primer within 2 mismatches" in res.note
+
+
+def test_not_located_is_below_threshold_even_at_zero_coverage() -> None:
+    aln, cons = _family()
+    res = check_assay(Assay("P", cons.seq[80:100], reverse_complement(cons.seq[10:30])), aln, cons, PARAMS, 0)
+    assert res.located is False and res.below_threshold is True

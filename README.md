@@ -61,7 +61,11 @@ note`. On the example family the two pairs above give 100 % and 30 % coverage, a
 run.
 
 A pair is reported as not located (0 % coverage, reason in `note`) when a primer fits two places
-equally well or the reverse primer does not bind downstream of the forward one. Options shared
+equally well or the reverse primer does not bind downstream of the forward one. When a primer has
+no site within `--max-mismatches`, `note` says so, and also says when the primer would fit if it
+were written in the other orientation (a common copy-paste slip with reverse primers). If the
+reference has no bases where the amplicon falls (for example a partial genome), the amplicon
+coordinates are left empty and `note` says `amplicon not on reference <id>`. Options shared
 with design mode (`-i`/`--aligned`, `--aligner`, `--reference-id`, `--length-tolerance`,
 `--outlier-action`, `--max-mismatches`, `--three-prime-window`, `--min-coverage`, `-v`) work
 the same; design-only options such as `--region` are rejected. Exit codes: `0` every pair meets

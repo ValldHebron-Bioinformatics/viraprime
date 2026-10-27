@@ -82,11 +82,9 @@ def load_assays(path: Path, window: int) -> list[Assay]:
     return assays
 
 
-def locate(site: str, consensus_seq: str) -> Location | None:
-    """Start on the consensus with the fewest mismatches; None if tied or the site is too long."""
+def _best_sites(site: str, consensus_seq: str) -> tuple[int, list[int]]:
+    """Fewest mismatches of site against the consensus, and every start that reaches it."""
     n = len(site)
-    if n > len(consensus_seq):
-        return None
     allowed = [IUPAC[b] for b in site]
     best, best_starts = n + 1, []
     for start in range(len(consensus_seq) - n + 1):
@@ -96,7 +94,15 @@ def locate(site: str, consensus_seq: str) -> Location | None:
             best, best_starts = mm, [start]
         elif mm == best:
             best_starts.append(start)
-    return Location(best_starts[0], best) if len(best_starts) == 1 else None
+    return best, best_starts
+
+
+def locate(site: str, consensus_seq: str) -> Location | None:
+    """Start on the consensus with the fewest mismatches; None if tied or the site is too long."""
+    if len(site) > len(consensus_seq):
+        return None
+    best, starts = _best_sites(site, consensus_seq)
+    return Location(starts[0], best) if len(starts) == 1 else None
 
 
 def _gc(primer: str) -> float:
@@ -127,15 +133,19 @@ def check_assay(
             notes.append(f"{label} primer is longer than the consensus")
             locs[label] = None
             continue
-        loc = locate(site, cons.seq)
-        if loc is None:
+        best, starts = _best_sites(site, cons.seq)
+        loc = Location(starts[0], best) if len(starts) == 1 else None
+        if best > params.max_mismatches:
+            # a unique poor site is still scored (it usually covers nothing); ties are not located
+            found = [f"no binding site for {label} primer within {params.max_mismatches} "
+                     f"mismatches (best {best})"]
+            flipped, _ = _best_sites(reverse_complement(site), cons.seq)
+            if flipped <= params.max_mismatches:
+                found.append(f"{label} primer may be written in the wrong orientation")
+            notes += found
+            log.warning("Pair %s: %s", assay.name, "; ".join(found))
+        elif loc is None:
             notes.append(f"ambiguous binding site for {label} primer")
-        elif loc.mismatches > params.max_mismatches:
-            log.warning(
-                "Pair %s: %s primer matches the consensus with %d mismatches; it may not belong "
-                "to this family or may be written in the wrong orientation",
-                assay.name, label, loc.mismatches,
-            )
         locs[label] = loc
     fwd, rev = locs["fwd"], locs["rev"]
     located = fwd is not None and rev is not None
@@ -159,5 +169,5 @@ def check_assay(
         fwd_tm=fwd_tm, rev_tm=rev_tm, fwd_tm_range=fwd_range, rev_tm_range=rev_range,
         fwd_gc=_gc(assay.forward), rev_gc=_gc(assay.reverse),
         degenerate=fold(assay.forward) > 1 or fold(assay.reverse) > 1,
-        below_threshold=coverage.coverage_pct < min_coverage,
+        below_threshold=not located or coverage.coverage_pct < min_coverage,
     )

@@ -206,9 +206,20 @@ def _fmt_tm(tm: float | None) -> str:
 
 
 def _amplicon(res: CheckResult, cmap: CoordMap) -> tuple[int, int] | None:
+    """Amplicon span on the reference, or None when unlocated or outside the reference."""
     if not res.located:
         return None
-    return cmap.col_to_ref(res.fwd_cols[0], "start"), cmap.col_to_ref(res.rev_cols[-1], "end")
+    try:
+        start = cmap.col_to_ref(res.fwd_cols[0], "start")
+        end = cmap.col_to_ref(res.rev_cols[-1], "end")
+    except PipelineError:  # the reference has no bases there (e.g. a partial genome)
+        return None
+    return (start, end) if start <= end else None
+
+
+def _note(res: CheckResult, cmap: CoordMap) -> str:
+    extra = [f"amplicon not on reference {cmap.reference_id}"] if res.located and not _amplicon(res, cmap) else []
+    return "; ".join(filter(None, [res.note, *extra]))
 
 
 def write_check_tsv(results: list[CheckResult], cmap: CoordMap, path: Path) -> None:
@@ -229,7 +240,7 @@ def write_check_tsv(results: list[CheckResult], cmap: CoordMap, path: Path) -> N
                 f"{cov.coverage_pct:.1f}", len(cov.covered), len(cov.covered) + len(cov.not_covered),
                 res.below_threshold,
                 ",".join(f"{sid}({why})" for sid, why in cov.not_covered.items()),
-                res.note,
+                _note(res, cmap),
             ])
 
 
@@ -240,18 +251,20 @@ def _pair_section(res: CheckResult, cmap: CoordMap) -> list[str]:
     lines = [title, "-" * len(title), f"Forward: {a.forward}", f"Reverse: {a.reverse}"]
     if res.located:
         f0, r0 = res.fwd.start, res.rev.start
-        start, end = _amplicon(res, cmap)
+        amp = _amplicon(res, cmap)
         lines += [
             f"Consensus positions: forward {f0 + 1}-{f0 + len(a.forward)}, "
             f"reverse {r0 + 1}-{r0 + len(a.reverse)}",
-            f"Amplicon on the reference: {start}-{end} ({end - start + 1} bp)",
+            f"Amplicon on the reference: {amp[0]}-{amp[1]} ({amp[1] - amp[0] + 1} bp)" if amp
+            else f"Amplicon on the reference: not on reference {cmap.reference_id}",
             f"Consensus mismatches: forward {res.fwd.mismatches}, reverse {res.rev.mismatches}",
         ]
     else:
         lines.append(f"Not located: {res.note}")
     lines.append(f"Coverage: {cov.coverage_pct:.1f}% ({len(cov.covered)} of {n_total})")
-    if res.located and res.note:
-        lines.append(f"Note: {res.note}")
+    note = _note(res, cmap)
+    if res.located and note:
+        lines.append(f"Note: {note}")
     if res.below_threshold and cov.not_covered:
         lines.append("Why it misses sequences (count of uncovered sequences):")
         lines += [f"  {reason}: {n}" for reason, n in count_reasons(cov.not_covered)]
