@@ -165,3 +165,12 @@ class RunReport:
     min_coverage: float
     regions: list[RegionResult]
     log_lines: list[str]
+
+
+@dataclass(frozen=True)
+class Assay:
+    """A primer pair to check, both oligos written 5'->3' (upper-case, U as T)."""
+
+    name: str
+    forward: str
+    reverse: str
