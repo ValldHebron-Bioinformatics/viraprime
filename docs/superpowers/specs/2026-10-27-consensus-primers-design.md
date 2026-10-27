@@ -58,10 +58,15 @@ reaches the coverage threshold.
      the reference, take the nearest ref base to the right (`side="start"`)
      or left (`side="end"`).
    - `col_to_cons(col, side)` analogous for consensus positions.
-   Region `[start, end]` (1-based, inclusive, on the reference) → columns →
-   consensus interval → primer3 `SEQUENCE_INCLUDED_REGION` (0-based start,
-   length). Adjustments onto gaps are logged. Invalid region (outside the
+   Each region `[start, end]` (1-based, inclusive, on the reference) →
+   columns → consensus interval → primer3 `SEQUENCE_INCLUDED_REGION` (0-based
+   start, length). Adjustments onto gaps are logged. All regions are
+   validated before any design work; an invalid region (outside the
    reference, start ≥ end, shorter than `--amplicon-min`) → error.
+
+Steps 1–5 run once per run. Steps 6–9 run **independently for each region**
+(see *Regions* below); the amplicon of a pair lies entirely inside its region.
+
 6. **Design** (`design.run_primer3`). `primer3.bindings.design_primers` on the
    consensus with: `PRIMER_MIN/OPT/MAX_TM`, `PRIMER_PAIR_MAX_DIFF_TM`,
    `PRIMER_MIN/MAX_SIZE` (opt = midpoint), `PRIMER_MIN/MAX_GC`,
@@ -96,11 +101,30 @@ reaches the coverage threshold.
    bases per position) would exceed `--max-degeneracy` (default 8). Re-score
    the pair. Tm reported as primer3 Tm of the consensus primer plus the
    min–max Tm over expanded variants (`primer3.calc_tm`).
-9. **Rank** (`ranking.rank`). Keep pairs with coverage ≥ `--min-coverage`
-   (default 95); sort by coverage desc, then primer3 penalty asc; output top
-   `--num-pairs` (default 5). If none pass: output the top `--num-pairs` of
-   all candidates with `below_threshold=True`, and the report explains the best
-   coverage reached and the most common failure reasons.
+9. **Rank** (`ranking.rank`, per region). Keep pairs with coverage ≥
+   `--min-coverage` (default 95); sort by coverage desc, then primer3 penalty
+   asc; output top `--num-pairs` (default 5). If none pass: output the top
+   `--num-pairs` of all candidates with `below_threshold=True`, and the report
+   explains the best coverage reached and the most common failure reasons.
+
+## Regions
+
+- `--region SPEC`, repeatable. `SPEC` = `START-END` or `NAME:START-END`
+  (1-based inclusive reference coordinates). Unnamed regions are named
+  `region1`, `region2`, … in command-line order.
+- `--regions-file FILE`: tab-separated `name`, `start`, `end`; an optional
+  header line (detected when `start` is not an integer); blank lines and
+  `#` comments ignored.
+- `--region` and `--regions-file` are mutually exclusive. Neither given →
+  one region `full` = the whole reference.
+- Names must be unique and match `[A-Za-z0-9_.-]+`. Regions may overlap.
+- Parse errors, duplicate names and invalid ranges → error before alignment
+  where possible (range-vs-reference checks happen once the reference is
+  known, still before any primer design).
+- Regions are independent: no cross-region Tm matching, dimer checks or
+  overlap constraints (multiplexing is out of scope).
+- Parsing lives in `regions.py` (`parse_region_spec`, `load_regions_file`
+  → `list[Region]`).
 
 ## CLI
 
@@ -111,7 +135,8 @@ reaches the coverage threshold.
 | `-o/--outdir` | required | created if missing |
 | `--aligner` | mafft | `mafft`, `muscle` |
 | `--reference-id` | first sequence | |
-| `--region-start`, `--region-end` | whole reference | 1-based inclusive, reference coords |
+| `--region` | whole reference | repeatable, `[NAME:]START-END`, 1-based inclusive ref coords |
+| `--regions-file` | — | TSV `name start end`; exclusive with `--region` |
 | `--amplicon-min`, `--amplicon-max` | **required** | bp |
 | `--tm-min/--tm-opt/--tm-max` | 57/60/63 | °C |
 | `--max-tm-diff` | 2 | °C |
@@ -135,27 +160,32 @@ tolerance > 0, `three-prime-window ≤ primer-len-min`, counts ≥ 1, coverage i
 ## Outputs (in `--outdir`)
 
 - `alignment.fasta`
-- `primers.tsv` columns: `rank, forward_seq, reverse_seq, forward_tm,
+- `primers.tsv` columns: `region, rank, forward_seq, reverse_seq, forward_tm,
   reverse_tm, forward_gc, reverse_gc, forward_len, reverse_len,
   amplicon_start, amplicon_end, amplicon_len, coverage_pct, n_covered,
   n_total, degenerate, forward_tm_range, reverse_tm_range, penalty,
   below_threshold, not_covered`. Amplicon start/end are 1-based reference
   coordinates (outer primer edges); `amplicon_len` is measured on the
   reference. `not_covered` = comma-separated `ID(reason)` list, empty if
-  none. Header only when primer3 returned nothing.
+  none. `rank` restarts at 1 for each region; rows grouped by region in
+  input order. A region where primer3 returned nothing contributes no rows
+  (header only if that is true for all regions).
 - `report.txt`: run date, command line, all parameter values, input stats
   (n sequences, median/min/max length), dropped/flagged outliers, alignment
-  stats, region mapping (incl. adjustments), number of primer3 candidates,
-  number passing coverage, warnings, and the no-valid-pair explanation.
+  stats, warnings, then **one section per region**: coordinate mapping
+  (incl. adjustments), number of primer3 candidates, number passing
+  coverage, best coverage, and the no-valid-pair explanation when relevant.
+  Ends with a summary line listing regions that failed.
   Logging goes to stderr and is also appended to `report.txt`'s log section.
 
 ## Exit codes
 
-- `0` success, ≥ 1 pair meets `--min-coverage`.
+- `0` success: every region has ≥ 1 pair meeting `--min-coverage`.
 - `1` error (`PipelineError` or argument error); message without traceback
   unless `--verbose`.
-- `2` completed but no pair met `--min-coverage` (or primer3 found none).
-  Outputs are still written.
+- `2` completed, but at least one region has no pair meeting
+  `--min-coverage` (or primer3 found none there). Failing regions are named
+  in the log and report. Outputs are still written for all regions.
 
 ## Code layout
 
@@ -168,6 +198,7 @@ consensus_primers/
   align.py        check_binary, run_aligner
   conservation.py score_columns, build_consensus
   coords.py       CoordMap
+  regions.py      Region, parse_region_spec, load_regions_file
   design.py       run_primer3
   scoring.py      match_primer, score_pair
   degenerate.py   degenerate_primer
@@ -175,7 +206,7 @@ consensus_primers/
   models.py       dataclasses + PipelineError
 tests/
   conftest.py     synthetic dataset builder (fixed seed)
-  test_io.py, test_lengths.py, test_coords.py, test_scoring.py,
+  test_io.py, test_lengths.py, test_coords.py, test_regions.py, test_scoring.py,
   test_degenerate.py, test_no_valid_pairs.py, test_cli_e2e.py
 pyproject.toml    console script `consensus-primers`
 requirements.txt, README.md
@@ -193,12 +224,18 @@ small indels and planted mismatches; per-test fixtures add specific features.
 - lengths: outlier dropped / kept (warn) / abort; IDs reported; reference-as-outlier error.
 - coords: ref↔column↔consensus round-trip with gaps in reference and others;
   region edge on a gap; 1-based off-by-one.
+- regions: `START-END` and `NAME:START-END` parsing, auto-naming, regions
+  file with/without header and comments; errors for bad syntax, start ≥ end,
+  duplicate names, `--region` + `--regions-file` together.
 - scoring: mismatches outside window accepted up to the limit; one mismatch in
   the 3′ window rejected (forward and reverse); gap/N = mismatch; insertion counted.
 - degenerate: SNP → correct IUPAC code; fold cap respected; 3′-terminal base fixed.
 - no valid pairs: highly variable dataset → exit 2, `below_threshold`, reason in report.
 - CLI e2e: full run with MAFFT on synthetic data (skip if MAFFT absent);
   all outputs exist, TSV header correct, top pair coverage 100 %.
+- CLI multi-region: two regions → `region` column populated, ranks restart
+  per region, one report section each; one conserved + one hypervariable
+  region → exit 2 with the failing region named in the report.
 
 Done = `pytest` green + README example command run on the test data with
 outputs inspected.
