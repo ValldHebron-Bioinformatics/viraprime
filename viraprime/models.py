@@ -287,3 +287,24 @@ class PrimerCandidate:
     @property
     def end(self) -> int:
         return self.start + self.length - 1
+
+
+@dataclass
+class Amplicon:
+    index: int  # 1-based
+    pool: int
+    fwd: PrimerCandidate
+    rev: PrimerCandidate
+    coverage: PairCoverage
+    below_threshold: bool
+    overlap_next: int | None  # insert overlap with the next amplicon (consensus bp)
+
+
+@dataclass
+class TilingResult:
+    amplicons: list[Amplicon]
+    geometry: Geometry
+    n_fwd: int
+    n_rev: int
+    dimer_warnings: list[str]
+    uncovered_ends: tuple[int, int]  # reference bases outside the first / last insert
