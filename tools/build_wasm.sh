@@ -49,6 +49,7 @@ emmake make disttbfast CC=emcc LIBS=-lm \
   || { tail -20 build.log >&2; exit 1; }
 cp disttbfast "$OUT/mafft-disttbfast.js"
 cp disttbfast.wasm "$OUT/mafft-disttbfast.wasm"
+cp ../license "$OUT/MAFFT-LICENSE.txt"   # BSD: the notice travels with the binaries
 
 echo "== done"
 ls -la "$OUT"

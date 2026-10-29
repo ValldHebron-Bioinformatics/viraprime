@@ -163,6 +163,20 @@ class JobManager:
                 "error": job.error,
             }
 
+    def cancel(self, job_id: str) -> bool:
+        """Stop a queued or running job (and its aligner); False if it already finished."""
+        with self._lock:
+            job = self._jobs[job_id]  # KeyError if unknown
+            if job.state == "queued":
+                self._queue.remove(job_id)
+            elif job.state == "running":
+                _kill_group(job.process)
+                job.process.join(5)
+            else:
+                return False
+            self._finish(job, "Cancelled")
+            return True
+
     def output(self, job_id: str, name: str) -> Path | None:
         """Path of a finished job's output file, or None."""
         with self._lock:

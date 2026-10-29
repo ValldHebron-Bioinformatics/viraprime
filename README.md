@@ -85,10 +85,12 @@ A "Check my primers" tab tests pairs you already have.
 
 The analysis runs **in your browser**: viraprime, primer3 and MAFFT are compiled to
 WebAssembly, so your sequences are never uploaded and nothing needs installing. The first run
-loads about 20 MB of tools, which the browser keeps for later visits. Results match the command
-line; the one difference is the alignment method: the browser always uses MAFFT's FFT-NS-2,
-while the command line runs `mafft --auto`, which picks the same method for genome-sized input
-but may pick a slower, more exact one for small inputs. For very large sets (hundreds of long
+loads about 20 MB of tools, which the browser keeps for later visits. The design steps are
+the same code as the command line; the alignment can differ. The browser always aligns with
+MAFFT's FFT-NS-2, while the command line runs `mafft --auto`, which uses FFT-NS-2 only for
+sequences of 10,000 bases or more (or 500 sequences or more) and a more refined method below
+that. For such inputs the web results say so, and the command line's primers can differ
+slightly. For very large sets (hundreds of long
 genomes) the command line is faster.
 
 ### Run it on your own server

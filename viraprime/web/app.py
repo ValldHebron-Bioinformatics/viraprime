@@ -134,6 +134,14 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such job (results are deleted "
                                 f"after {limits.retention_s / 3600:g} hours)") from None
 
+    @app.delete("/api/jobs/{job_id}")
+    def cancel_job(job_id: str) -> dict[str, bool]:
+        _job(job_id)
+        try:
+            return {"cancelled": manager.cancel(job_id)}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="no such job") from None
+
     @app.get("/api/jobs/{job_id}/files/{name}")
     def job_file(job_id: str, name: str) -> FileResponse:
         _job(job_id)

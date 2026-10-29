@@ -662,7 +662,8 @@
   }
 
   function onEvent(ev) {
-    if (ev.jobId && state.engine.name === 'server' && !new URLSearchParams(location.search).get('job')) {
+    if (ev.jobId && state.engine.name === 'server'
+        && new URLSearchParams(location.search).get('job') !== ev.jobId) {
       history.replaceState(null, '', `?job=${ev.jobId}#${state.page}`);
     }
     showProgress(ev);
@@ -683,6 +684,7 @@
       $('results').focus({ preventScroll: true });
     } catch (err) {
       if (err.cancelled) {
+        history.replaceState(null, '', `${location.pathname}#${state.page}`);
         showIdle();
         $('verdict').className = 'verdict plan';
         $('verdict').textContent = 'Cancelled. Change the settings or run it again.';

@@ -10,25 +10,41 @@
   // Python side: MAFFT as viraprime's "mafft" aligner, progress to the page, and one call that
   // checks a request exactly like the server (prepare_job), runs viraprime and builds the result.
   const SHIM = `
-import contextlib, io, json, os, shutil, sys, traceback, zipfile
+import contextlib, io, json, logging, os, re, shutil, sys, traceback, zipfile
 from pathlib import Path
 
 import viraprime_js
 from viraprime.align import register_aligner
 from viraprime.cli import main, set_progress_reporter
 from viraprime.io import alignment_from_records, load_fasta
+from viraprime.models import PipelineError
 from viraprime.web.params import Limits
 from viraprime.web.prepare import prepare_job
 from viraprime.web.result import OUTPUT_FILES, build_result
 
 LIMITS = Limits()
 OOM = "Your browser ran out of memory. Try fewer sequences or the command line."
+log = logging.getLogger("viraprime")
 
 
 def _mafft(records):
+    # the command line runs \`mafft --auto\`, which picks a more refined method than FFT-NS-2
+    # for inputs under 10,000 bases and 500 sequences
+    longest = max(len(r.seq) for r in records)
+    if longest < 10000 and len(records) < 500:
+        log.warning("Aligned with MAFFT FFT-NS-2 (browser version). On the command line, "
+                    "mafft --auto uses a more refined method for this input, so its primers "
+                    "can differ slightly.")
     text = "".join(f">{r.id}\\n{r.seq}\\n" for r in records)
+    try:
+        aligned = viraprime_js.run_mafft(text)
+    except Exception as exc:  # a JavaScript error from the MAFFT module
+        message = str(exc)
+        if re.search(r"memory|alloc|out of bounds", message, re.IGNORECASE):
+            raise PipelineError(OOM) from None
+        raise PipelineError("MAFFT failed: " + message.split("MAFFT failed:")[-1].strip()) from None
     out = Path("/tmp/mafft_out.fasta")
-    out.write_text(viraprime_js.run_mafft(text))
+    out.write_text(aligned)
     return alignment_from_records(load_fasta(out, allow_gaps=True))
 
 

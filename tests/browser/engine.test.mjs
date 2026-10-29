@@ -67,3 +67,21 @@ test("reports the same validation messages as the server", () => {
     /MUSCLE is not installed/);
   assert.match(core.run({ mode: "tile", settings: { amplicons: 4 }, fasta: "hello", primers: "" }).error, /./);
 });
+
+test("warns when the command line would align with another method", () => {
+  // 24 genomes of 9 kb: `mafft --auto` picks FFT-NS-i on the command line, the browser FFT-NS-2
+  const out = core.run({ mode: "tile", settings: { amplicons: 4 }, fasta: genomes, primers: "" });
+  assert.ok(out.result.warnings.some((w) => /FFT-NS-2/.test(w) && /command line/.test(w)), out.result.warnings.join(" | "));
+});
+
+test("a MAFFT failure is reported clearly, out of memory included", async () => {
+  const failing = await createEngineCore({
+    loadPyodide: () => loadPyodide(),
+    fetchBytes: async (rel) => new Uint8Array(fs.readFileSync(path.join(APP, rel))),
+    createMafft: require(path.join(APP, "engine/mafft-disttbfast.js")),
+    mafft: { makeMafftRunner: () => () => { throw new Error("MAFFT failed: Cannot allocate memory"); } },
+  });
+  const out = failing.run({ mode: "tile", settings: { amplicons: 4 }, fasta: genomes, primers: "" });
+  assert.equal(out.result.exit_code, 1);
+  assert.match(out.result.error, /ran out of memory/);
+});

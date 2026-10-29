@@ -69,6 +69,8 @@
         cancel() {
           stopped = true;
           clearTimeout(timer);
+          // stop the job on the server too, so it frees its worker slot
+          fetch(`/api/jobs/${jobId}`, { method: 'DELETE' }).catch(() => {});
           if (rejectFn) rejectFn(cancelledError());
         },
       };

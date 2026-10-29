@@ -23,8 +23,12 @@ def build(out: Path) -> None:
     out = out.resolve()
     if out == ROOT or ROOT / "site" in (out, *out.parents) or out in ROOT.parents:
         raise SystemExit(f"refusing to build into {out}")
-    if out.exists():
+    if out.exists() and any(out.iterdir()):
+        if not (out / "app" / "engine" / "manifest.json").is_file():
+            raise SystemExit(f"{out} is not a previous site build; choose a new or empty folder")
         shutil.rmtree(out)
+    elif out.exists():
+        out.rmdir()
     shutil.copytree(ROOT / "site", out)
     app = out / "app"
     shutil.copytree(ROOT / "viraprime" / "web" / "static", app, dirs_exist_ok=True)
