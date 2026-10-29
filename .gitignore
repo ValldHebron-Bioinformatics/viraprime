@@ -14,3 +14,4 @@ site/assets/
 .claude/
 skills-lock.json
 tests/browser/node_modules/
+build/

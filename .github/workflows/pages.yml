@@ -1,9 +1,12 @@
 name: Deploy site to GitHub Pages
 
+# The landing page (site/) and the web app under app/, which runs viraprime in the browser.
+# tools/build_site.py assembles both into _site with the engine files and a fresh viraprime wheel.
+
 on:
   push:
     branches: [master]
-    paths: ["site/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", "viraprime/**", "pyproject.toml", "tools/build_site.py", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -23,9 +26,14 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build the site
+        run: python tools/build_site.py _site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

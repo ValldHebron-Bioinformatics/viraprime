@@ -38,7 +38,7 @@
     <h1 id="hero-title" class="r">Primers that fit every strain</h1>
     <p class="lead r">Drop your genomes, say how many amplicons you want, and viraprime tiles the whole genome with overlapping primer pairs in two pools, each one checked against every sequence.</p>
     <div class="actions r">
-      <a class="btn btn-accent" href="https://github.com/ValldHebron-Bioinformatics/viraprime#run-it-from-the-web" data-app-url>Open the web app</a>
+      <a class="btn btn-accent" href="app/" data-app-url>Open the web app</a>
       <a class="link-arrow" href="#start">Or install the command line <span aria-hidden="true">→</span></a>
     </div>
   </div>
@@ -211,7 +211,7 @@
     <h2 id="faq-title">Common questions</h2>
     <ul role="list" id="faq-q">
       <li><button type="button" aria-expanded="true" aria-controls="a9">Do I need to install anything?</button>
-        <p id="a9">No. Open the web app, drop your FASTA and choose the number of amplicons. Files are deleted 24 hours after the job finishes; for private or larger data, install the command line.</p></li>
+        <p id="a9">No. Open the web app, drop your FASTA and choose the number of amplicons. The analysis runs in your browser, so your sequences are never uploaded. For very large sets, the command line is faster.</p></li>
       <li><button type="button" aria-expanded="false" aria-controls="a1">Why not run primer3 on the consensus and stop there?</button>
         <p id="a1">A consensus is a sequence that may exist in no real sample. A pair that fits it can still miss several strains, often right at its 3′ end. viraprime keeps primer3’s design and judges every pair on the real sequences.</p></li>
       <li><button type="button" aria-expanded="false" aria-controls="a2">What counts as a mismatch?</button>
