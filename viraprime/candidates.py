@@ -84,24 +84,21 @@ def pick_conserved(
     params: TilingParams,
     bin_size: int = 40,
     per_bin: int = 3,
-    radius: int = 500,
-    slack: float = 1.0,
 ) -> list[PrimerCandidate]:
-    """Drop candidates far more variable than the best within radius; keep per_bin per bin."""
+    """The per_bin least variable candidates of every bin of 3'-anchor positions.
+
+    Every bin keeps its best candidates however variable the region is: in a variable
+    stretch (an attachment-protein gene, say) the best available primers can still match
+    most sequences, and the tiling search, which maximises the weakest amplicon's
+    coverage, decides whether to use them.
+    """
     freq = [stats[col].majority_freq for col in cons.cons_to_col]
-    scored = [(_variability(c, freq, params.window), c) for c in cands]
     bins: dict[int, list[tuple[float, PrimerCandidate]]] = defaultdict(list)
-    for v, c in scored:
-        bins[_anchor(c) // bin_size].append((v, c))
-    bin_min = {b: min(v for v, _ in items) for b, items in bins.items()}
-    reach = radius // bin_size
+    for c in cands:
+        bins[_anchor(c) // bin_size].append((_variability(c, freq, params.window), c))
     picked: list[PrimerCandidate] = []
     for b in sorted(bins):
-        nearby = min(bin_min[x] for x in range(b - reach, b + reach + 1) if x in bin_min)
-        keep = sorted(
-            ((v, c) for v, c in bins[b] if v <= nearby + slack),
-            key=lambda vc: (vc[0], vc[1].penalty),
-        )[:per_bin]
+        keep = sorted(bins[b], key=lambda vc: (vc[0], vc[1].penalty))[:per_bin]
         picked += sorted((c for _, c in keep), key=_anchor)
     return picked
 

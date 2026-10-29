@@ -50,14 +50,16 @@ def test_enumerate_skips_non_acgt(family) -> None:
     assert not [c for c in fwds + revs if c.start <= 100 <= c.end]
 
 
-def test_pick_conserved_avoids_variable_block(family, raw) -> None:
+def test_pick_conserved_keeps_the_best_of_every_window(family, raw) -> None:
+    """Variable regions keep their least-variable primers; the tiling search decides."""
     _, stats, cons = family
     for cands in raw:
         picked = pick_conserved(cands, stats, cons, PARAMS)
-        assert picked
-        assert not [c for c in picked if c.start >= 3000 and c.end < 3300]
         anchor = (lambda c: c.end) if cands[0].strand == "+" else (lambda c: c.start)
         assert max(Counter(anchor(c) // 40 for c in picked).values()) <= 3
+        # every 40-bp window that had candidates still has some, inside the variable block too
+        assert {anchor(c) // 40 for c in picked} == {anchor(c) // 40 for c in cands}
+        assert [c for c in picked if c.start >= 3000 and c.end < 3300]
 
 
 def test_score_matches_match_primer(family, raw) -> None:

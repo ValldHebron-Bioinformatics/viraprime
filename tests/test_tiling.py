@@ -164,3 +164,17 @@ def test_no_fit_suggests_a_smaller_n_that_works() -> None:
     suggested = [int(x) for x in hint.split(", ")]
     assert suggested and all(m < 10 for m in suggested)
     assert len(tile(*prepared, _params(n_amplicons=suggested[0])).amplicons) == suggested[0]
+
+
+def test_wide_variable_block_gives_a_flagged_tiling_not_an_error() -> None:
+    # 1,200 bp where every base varies (p=0.25): too wide for 10 amplicons to step over
+    res = tile(*_prepare(make_genome_family(hyper=(2500, 3700))), _params(n_amplicons=10))
+    assert len(res.amplicons) == 10
+    low = [a for a in res.amplicons if a.below_threshold]
+    assert low
+    near = lambda p: p.end >= 2400 and p.start <= 3800
+    for a in low:  # only amplicons with a primer in or near the block fall short
+        assert near(a.fwd) or near(a.rev)
+    for a in res.amplicons:
+        if a.rev.end < 2400 or a.fwd.start > 3800:
+            assert not a.below_threshold
