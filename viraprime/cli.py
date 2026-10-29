@@ -264,15 +264,28 @@ def check_tiling_params(a: argparse.Namespace) -> None:
         raise PipelineError("Invalid parameters: " + "; ".join(problems))
 
 
+_progress_reporter: Callable[[str, float], None] | None = None
+
+
+def set_progress_reporter(fn: Callable[[str, float], None] | None) -> None:
+    """Also send every progress update to fn (a host program, e.g. the browser worker)."""
+    global _progress_reporter
+    _progress_reporter = fn
+
+
 def make_progress(path: Path | None) -> Callable[[str, float], None]:
-    """Report progress as {"stage", "progress"} JSON in path (atomically); no-op without a path."""
-    if path is None:
+    """Report progress as {"stage", "progress"} JSON in path (atomically) and to the reporter."""
+    reporter = _progress_reporter
+    if path is None and reporter is None:
         return lambda stage, fraction: None
 
     def emit(stage: str, fraction: float) -> None:
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps({"stage": stage, "progress": round(fraction, 3)}))
-        os.replace(tmp, path)
+        if reporter is not None:
+            reporter(stage, round(fraction, 3))
+        if path is not None:
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps({"stage": stage, "progress": round(fraction, 3)}))
+            os.replace(tmp, path)
 
     return emit
 
