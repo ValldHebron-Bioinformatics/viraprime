@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 
 class PipelineError(Exception):
@@ -258,3 +259,31 @@ class Geometry:
     tolerance: float
     end_slack: int
     max_outer_overlap: int
+
+
+@dataclass
+class PrimerCandidate:
+    """One primer considered for tiling, located on the consensus.
+
+    site is the oligo as it reads on the forward strand (the reverse primer
+    reverse-complemented); seq is the primer 5'->3' as ordered. base_seq is seq
+    before any degenerate bases were added. Bit i of mask is set when the primer
+    matches aln.ids[i].
+    """
+
+    strand: Literal["+", "-"]
+    start: int
+    length: int
+    site: str
+    base_seq: str
+    seq: str
+    tm: float
+    tm_range: tuple[float, float] | None
+    gc: float
+    penalty: float
+    mask: int = 0
+    cols: list[int] = field(default_factory=list)
+
+    @property
+    def end(self) -> int:
+        return self.start + self.length - 1
