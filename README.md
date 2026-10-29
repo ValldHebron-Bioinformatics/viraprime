@@ -79,13 +79,41 @@ says the most that fit).
 
 ## Run it from the web
 
-The same tool runs as a web app: drop your FASTA, choose the number of amplicons, and download
-the results. To run it on your own computer:
+The same tool runs as a web app: drop your FASTA, choose the number of amplicons, and get the
+primers with a coverage map and downloads. A "Check my primers" tab tests pairs you already have.
+Uploaded files are deleted 24 hours after the job finishes; for private or larger data, use the
+command line.
+
+Run it on your own computer:
 
 ```bash
 pip install -e ".[web]"
 viraprime web            # opens http://127.0.0.1:8000
 ```
+
+Or with Docker (MAFFT included):
+
+```bash
+docker build -t viraprime-web .
+docker run --rm -p 7860:7860 viraprime-web     # http://localhost:7860
+```
+
+Limits can be changed with environment variables: `VIRAPRIME_MAX_SEQS` (500),
+`VIRAPRIME_MAX_SEQ_LEN` (35000), `VIRAPRIME_MAX_UPLOAD_MB` (20), `VIRAPRIME_MAX_AMPLICONS` (200),
+`VIRAPRIME_WORKERS` (2), `VIRAPRIME_TIMEOUT_S` (900), `VIRAPRIME_RETENTION_S` (86400) and
+`VIRAPRIME_JOBS_DIR`.
+
+### Put it online (Hugging Face Space)
+
+1. Create a free account at [huggingface.co](https://huggingface.co), then **New Space**: any
+   name, SDK **Docker**, template **Blank**, hardware **CPU basic** (free).
+2. Create an access token with **write** permission (Settings → Access Tokens).
+3. In this GitHub repository, Settings → Secrets and variables → Actions: add the secret
+   `HF_TOKEN` (the token) and the variable `HF_SPACE` (`<owner>/<space name>`).
+4. Run the **Deploy web app to Hugging Face** workflow once from the Actions tab (it also runs
+   on every push to master that changes the app). The app appears at
+   `https://huggingface.co/spaces/<owner>/<space name>`. A free Space sleeps when idle and
+   takes about 30 seconds to wake up.
 
 ## Advanced: target regions
 
