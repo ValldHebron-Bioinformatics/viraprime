@@ -143,3 +143,13 @@ def test_dimer_warning_format(family, monkeypatch) -> None:
     assert res.dimer_warnings
     assert res.dimer_warnings[0].startswith("pool 1: viraprime_1_LEFT × ")
     assert "-12.0 kcal/mol" in res.dimer_warnings[0]
+
+
+def test_choose_prefers_reaching_the_ends() -> None:
+    geom = geometry(1000, 1, 50, 0.20, 25)  # one amplicon, end slack 250
+    import dataclasses
+    # primers at the very ends have a worse penalty; reaching the ends must still win
+    fwds = [dataclasses.replace(_p("+", 0, 10), penalty=1.0), _p("+", 150, 10)]
+    revs = [_p("-", 830, 10), dataclasses.replace(_p("-", 980, 10), penalty=1.0)]
+    path = choose(fwds, revs, 1, geom, _params(n_amplicons=1), 1000)
+    assert [(f.start, r.start) for f, r in path] == [(0, 980)]

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import shlex
 import statistics
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn
+from typing import Callable, NoReturn
 
 from Bio.Seq import reverse_complement
 
@@ -26,6 +28,9 @@ from viraprime.io import (
     write_check_report,
     write_check_tsv,
     write_report,
+    write_scheme_bed,
+    write_tiling_report,
+    write_tiling_tsv,
     write_tsv,
 )
 from viraprime.lengths import filter_by_length, ungapped_length
@@ -44,10 +49,13 @@ from viraprime.models import (
     RunReport,
     ScoredPair,
     ScoringParams,
+    TilingParams,
+    TilingReport,
 )
 from viraprime.ranking import failure_summary, rank
 from viraprime.regions import resolve_regions
 from viraprime.scoring import score_pair
+from viraprime.tiling import tile
 
 log = logging.getLogger("viraprime")
 
@@ -74,8 +82,11 @@ class _Parser(argparse.ArgumentParser):
 def build_parser() -> argparse.ArgumentParser:
     p = _Parser(
         prog="viraprime",
-        description="Design consensus PCR primers from a multi-FASTA of related sequences.",
-        epilog="To test primer pairs you already have: viraprime check --help",
+        description="Design consensus PCR primers from a multi-FASTA of related sequences. "
+                    "Simplest use: viraprime -i genomes.fasta -n 10 -o out (tile the whole "
+                    "genome with 10 overlapping amplicons in 2 pools).",
+        epilog="To test primer pairs you already have: viraprime check --help. "
+               "To run the web app locally: viraprime web",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     src = p.add_mutually_exclusive_group(required=True)
@@ -84,6 +95,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--outdir", type=Path, required=True, help="output directory")
     p.add_argument("--aligner", choices=["mafft", "muscle"], default="mafft")
     p.add_argument("--reference-id", help="reference for coordinates (default: first sequence)")
+    p.add_argument("-n", "--amplicons", type=int,
+                   help="tile the whole genome with this many overlapping amplicons (2 pools)")
+    p.add_argument("--overlap", type=int, default=50,
+                   help="tiling: minimum overlap between neighbouring amplicons (bp)")
+    p.add_argument("--no-degenerate", action="store_true",
+                   help="tiling: plain primers only (degenerate bases are on by default)")
+    p.add_argument("--progress-file", type=Path, help=argparse.SUPPRESS)
 
     reg = p.add_mutually_exclusive_group()
     reg.add_argument("--region", action="append", metavar="[NAME:]START-END",
@@ -91,8 +109,8 @@ def build_parser() -> argparse.ArgumentParser:
                           "(default: whole reference)")
     reg.add_argument("--regions-file", type=Path, help="TSV with columns name, start, end")
 
-    p.add_argument("--amplicon-min", type=int, required=True, help="minimum amplicon length (bp)")
-    p.add_argument("--amplicon-max", type=int, required=True, help="maximum amplicon length (bp)")
+    p.add_argument("--amplicon-min", type=int, help="region design: minimum amplicon length (bp)")
+    p.add_argument("--amplicon-max", type=int, help="region design: maximum amplicon length (bp)")
     p.add_argument("--tm-min", type=float, default=57.0)
     p.add_argument("--tm-opt", type=float, default=60.0)
     p.add_argument("--tm-max", type=float, default=63.0)
@@ -111,14 +129,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="3' bases that must match exactly")
     p.add_argument("--min-coverage", type=float, default=95.0, help="minimum coverage (%%)")
     p.add_argument("--allow-degenerate", action="store_true", help="allow IUPAC bases in primers")
-    p.add_argument("--max-degeneracy", type=int, default=8, help="max fold per degenerate primer")
+    p.add_argument("--max-degeneracy", type=int,
+                   help="max fold per degenerate primer (default 4 when tiling, 8 otherwise)")
     p.add_argument("--candidates", type=int, default=200, help="primer3 pairs to re-score")
     p.add_argument("--num-pairs", type=int, default=5, help="pairs to report per region")
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging and tracebacks")
     return p
 
 
-def check_params(a: argparse.Namespace) -> None:
+def _design_problems(a: argparse.Namespace) -> list[str]:
+    """Checks shared by region design and tiling."""
     problems: list[str] = []
     if not a.tm_min <= a.tm_opt <= a.tm_max:
         problems.append("--tm-min <= --tm-opt <= --tm-max is required")
@@ -126,8 +146,6 @@ def check_params(a: argparse.Namespace) -> None:
         problems.append("1 <= --primer-len-min <= --primer-len-max is required")
     if not 0 <= a.gc_min <= a.gc_max <= 100:
         problems.append("0 <= --gc-min <= --gc-max <= 100 is required")
-    if not 1 <= a.amplicon_min <= a.amplicon_max:
-        problems.append("1 <= --amplicon-min <= --amplicon-max is required")
     if a.length_tolerance <= 0:
         problems.append("--length-tolerance must be > 0")
     if not 1 <= a.three_prime_window <= a.primer_len_min:
@@ -138,7 +156,16 @@ def check_params(a: argparse.Namespace) -> None:
         problems.append("--min-coverage must be between 0 and 100")
     if a.max_tm_diff < 0:
         problems.append("--max-tm-diff must be >= 0")
-    for name in ("max_degeneracy", "candidates", "num_pairs"):
+    if a.max_degeneracy < 1:
+        problems.append("--max-degeneracy must be >= 1")
+    return problems
+
+
+def check_params(a: argparse.Namespace) -> None:
+    problems = _design_problems(a)
+    if not 1 <= a.amplicon_min <= a.amplicon_max:
+        problems.append("1 <= --amplicon-min <= --amplicon-max is required")
+    for name in ("candidates", "num_pairs"):
         if getattr(a, name) < 1:
             problems.append(f"--{name.replace('_', '-')} must be >= 1")
     if problems:
@@ -225,6 +252,34 @@ class _Aligned:
     cmap: CoordMap
 
 
+def check_tiling_params(a: argparse.Namespace) -> None:
+    problems = _design_problems(a)
+    if a.amplicons < 1:
+        problems.append("-n must be >= 1")
+    if a.overlap < 0:
+        problems.append("--overlap must be >= 0")
+    if problems:
+        raise PipelineError("Invalid parameters: " + "; ".join(problems))
+
+
+def make_progress(path: Path | None) -> Callable[[str, float], None]:
+    """Report progress as {"stage", "progress"} JSON in path (atomically); no-op without a path."""
+    if path is None:
+        return lambda stage, fraction: None
+
+    def emit(stage: str, fraction: float) -> None:
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps({"stage": stage, "progress": round(fraction, 3)}))
+        os.replace(tmp, path)
+
+    return emit
+
+
+def _report_params(a: argparse.Namespace) -> dict[str, object]:
+    return {k: (str(v) if isinstance(v, Path) else v)
+            for k, v in vars(a).items() if k != "progress_file"}
+
+
 def _load_inputs(a: argparse.Namespace) -> _Inputs:
     """Load and validate the input, filter by length and pick the reference."""
     if a.input is not None:
@@ -255,8 +310,10 @@ def _align_inputs(a: argparse.Namespace, inp: _Inputs) -> _Aligned:
 
 def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
     check_params(a)
+    progress = make_progress(a.progress_file)
     inp = _load_inputs(a)
     regions = resolve_regions(a.region, a.regions_file, inp.ref_len)
+    progress("aligning", 0.05)
     al = _align_inputs(a, inp)
     records, lengths, lf, reference_id = inp.records, inp.lengths, inp.lf, inp.reference_id
     aln, stats, cons, cmap = al.aln, al.stats, al.cons, al.cmap
@@ -277,6 +334,7 @@ def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
         a.gc_min, a.gc_max, a.amplicon_min, a.amplicon_max, a.candidates,
     )
     sparams = ScoringParams(a.max_mismatches, a.three_prime_window)
+    progress("scoring", 0.3)
     results = [
         _design_region(r, included[r.name], cons, aln, a, dparams, sparams) for r in regions
     ]
@@ -285,7 +343,7 @@ def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
     failed = [res.region.name for res in results if res.rank.below_threshold]
     if failed:
         log.warning("Regions without a pair meeting --min-coverage: %s", ", ".join(failed))
-    params = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(a).items()}
+    params = _report_params(a)
     report = RunReport(
         command=command, params=params, n_input=len(records),
         median_len=float(statistics.median(lengths)), min_len=min(lengths), max_len=max(lengths),
@@ -296,7 +354,46 @@ def run(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
     )
     write_report(report, a.outdir / "report.txt")
     log.info("Wrote results to %s", a.outdir)
+    progress("done", 1.0)
     return EXIT_BELOW_THRESHOLD if failed else EXIT_OK
+
+
+def run_tiling(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
+    check_tiling_params(a)
+    progress = make_progress(a.progress_file)
+    inp = _load_inputs(a)
+    progress("aligning", 0.05)
+    al = _align_inputs(a, inp)
+    params = TilingParams(
+        n_amplicons=a.amplicons, overlap=a.overlap, tm_min=a.tm_min, tm_opt=a.tm_opt,
+        tm_max=a.tm_max, max_tm_diff=a.max_tm_diff, len_min=a.primer_len_min,
+        len_max=a.primer_len_max, gc_min=a.gc_min, gc_max=a.gc_max,
+        max_mismatches=a.max_mismatches, window=a.three_prime_window,
+        degenerate=not a.no_degenerate, max_degeneracy=a.max_degeneracy,
+        min_coverage=a.min_coverage,
+    )
+    result = tile(al.aln, al.cons, al.stats, al.cmap, params, progress)
+    progress("writing", 0.95)
+    write_tiling_tsv(result, al.cmap, a.outdir / "primers.tsv")
+    write_scheme_bed(result, al.cmap, a.outdir / "scheme.bed")
+    low = [str(x.index) for x in result.amplicons if x.below_threshold]
+    if low:
+        log.warning("Amplicons below --min-coverage: %s", ", ".join(low))
+    else:
+        log.info("All %d amplicons meet %g%% coverage", len(result.amplicons), a.min_coverage)
+    report = TilingReport(
+        command=command, params=_report_params(a), n_input=len(inp.records),
+        median_len=float(statistics.median(inp.lengths)), min_len=min(inp.lengths),
+        max_len=max(inp.lengths), length=inp.lf, reference_id=inp.reference_id,
+        aln_length=al.aln.length, cons_length=len(al.cons.seq),
+        n_conserved=sum(1 for s in al.stats if s.majority_freq == 1.0),
+        mean_conservation=statistics.fmean(s.majority_freq for s in al.stats),
+        min_coverage=a.min_coverage, result=result, log_lines=log_lines,
+    )
+    write_tiling_report(report, al.cmap, a.outdir / "report.txt")
+    log.info("Wrote results to %s", a.outdir)
+    progress("done", 1.0)
+    return EXIT_BELOW_THRESHOLD if low else EXIT_OK
 
 
 def build_check_parser() -> argparse.ArgumentParser:
@@ -321,6 +418,7 @@ def build_check_parser() -> argparse.ArgumentParser:
                    help="3' bases that must match exactly")
     p.add_argument("--min-coverage", type=float, default=95.0, help="minimum coverage (%%)")
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging and tracebacks")
+    p.add_argument("--progress-file", type=Path, help=argparse.SUPPRESS)
     return p
 
 
@@ -340,9 +438,12 @@ def check_check_params(a: argparse.Namespace) -> None:
 
 def run_check(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
     check_check_params(a)
+    progress = make_progress(a.progress_file)
     inp = _load_inputs(a)
     assays = load_assays(a.primers, a.three_prime_window)  # before alignment: fail fast
+    progress("aligning", 0.05)
     al = _align_inputs(a, inp)
+    progress("scoring", 0.5)
     sparams = ScoringParams(a.max_mismatches, a.three_prime_window)
     results = [check_assay(x, al.aln, al.cons, sparams, a.min_coverage) for x in assays]
     for res in results:
@@ -354,7 +455,7 @@ def run_check(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
     low = [r.assay.name for r in results if r.below_threshold]
     if low:
         log.warning("Pairs below --min-coverage: %s", ", ".join(low))
-    params = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(a).items()}
+    params = _report_params(a)
     report = CheckReport(
         command=command, params=params, n_input=len(inp.records),
         median_len=float(statistics.median(inp.lengths)), min_len=min(inp.lengths),
@@ -366,17 +467,59 @@ def run_check(a: argparse.Namespace, command: str, log_lines: list[str]) -> int:
     )
     write_check_report(report, al.cmap, a.outdir / "report.txt")
     log.info("Wrote results to %s", a.outdir)
+    progress("done", 1.0)
     return EXIT_BELOW_THRESHOLD if low else EXIT_OK
+
+
+TILING_CONFLICTS = (("region", "--region"), ("regions_file", "--regions-file"),
+                    ("amplicon_min", "--amplicon-min"), ("amplicon_max", "--amplicon-max"),
+                    ("allow_degenerate", "--allow-degenerate"))
+
+
+def parse_args(argv: list[str]) -> tuple[argparse.Namespace, Callable[..., int], str]:
+    """Parse argv for check, tiling or region mode; usage errors exit 1."""
+    if argv[:1] == ["check"]:
+        args = build_check_parser().parse_args(argv[1:])
+        return args, run_check, "viraprime check " + shlex.join(argv[1:])
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.amplicons is not None:
+        clash = [flag for name, flag in TILING_CONFLICTS if getattr(args, name)]
+        if clash:
+            parser.error(f"-n cannot be combined with {', '.join(clash)}")
+        runner: Callable[..., int] = run_tiling
+    elif args.no_degenerate:
+        parser.error("--no-degenerate only applies to tiling (-n)")
+    elif args.amplicon_min is None or args.amplicon_max is None:
+        parser.error("use -n N to tile the whole genome with N amplicons, or --amplicon-min/"
+                     "--amplicon-max (and optionally --region) for region design")
+    else:
+        runner = run
+    if args.max_degeneracy is None:
+        args.max_degeneracy = 4 if args.amplicons is not None else 8
+    return args, runner, "viraprime " + shlex.join(argv)
+
+
+def validate_args(a: argparse.Namespace) -> None:
+    """The parameter checks the chosen mode runs first (raises PipelineError)."""
+    if hasattr(a, "primers"):
+        check_check_params(a)
+    elif a.amplicons is not None:
+        check_tiling_params(a)
+    else:
+        check_params(a)
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv[:1] == ["check"]:
-        args = build_check_parser().parse_args(argv[1:])
-        runner, command = run_check, "viraprime check " + shlex.join(argv[1:])
-    else:
-        args = build_parser().parse_args(argv)
-        runner, command = run, "viraprime " + shlex.join(argv)
+    if argv[:1] == ["web"]:
+        try:
+            from viraprime.web.server import main as web_main
+        except ImportError:
+            print("viraprime web needs: pip install 'viraprime[web]'", file=sys.stderr)
+            return EXIT_ERROR
+        return web_main(argv[1:])
+    args, runner, command = parse_args(argv)
 
     fmt = logging.Formatter("%(levelname)s: %(message)s")
     stderr_handler = logging.StreamHandler(sys.stderr)

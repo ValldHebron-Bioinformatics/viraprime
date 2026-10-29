@@ -87,6 +87,9 @@ def choose(
 ) -> Path_ | None:
     """Exactly n amplicons in genome order maximising the worst coverage, then the sum.
 
+    Ties are broken by how close the tiling reaches both genome ends, then by the
+    summed primer penalties.
+
     Dynamic programming over layers k = 1..n whose state is the reverse primer that
     ends amplicon k; feasibility for a coverage threshold is monotone, so the
     threshold is binary-searched over the distinct amplicon coverages.
@@ -120,28 +123,30 @@ def choose(
     last_ok = [r.end >= genome_len - 1 - geom.end_slack for r in revs]
 
     def run(t: int) -> Path_ | None:
-        # layer value: (sum of coverage, -sum of penalty); back[k][ri] = (fi, prev ri)
-        value: dict[int, tuple[int, float]] = {}
+        # layer value: (sum of coverage, -bases before the first primer, -sum of penalty);
+        # back[k][ri] = (fi, prev ri)
+        value: dict[int, tuple[int, int, float]] = {}
         back: list[dict[int, tuple[int, int | None]]] = [{}]
         for ri, amps in enumerate(by_rev):
             for fi, cov, neg in amps:
-                if cov >= t and first_ok[fi] and (ri not in value or (cov, neg) > value[ri]):
-                    value[ri] = (cov, neg)
+                v = (cov, -fwds[fi].start, neg)
+                if cov >= t and first_ok[fi] and (ri not in value or v > value[ri]):
+                    value[ri] = v
                     back[0][ri] = (fi, None)
         for _ in range(n - 1):
-            best_in: dict[int, tuple[tuple[int, float], int]] = {}
+            best_in: dict[int, tuple[tuple[int, int, float], int]] = {}
             for fi, rs in enumerate(preds):
                 cands = [(value[ri], ri) for ri in rs if ri in value]
                 if cands:
                     best_in[fi] = max(cands)
-            new: dict[int, tuple[int, float]] = {}
+            new: dict[int, tuple[int, int, float]] = {}
             layer: dict[int, tuple[int, int | None]] = {}
             for ri, amps in enumerate(by_rev):
                 for fi, cov, neg in amps:
                     if cov < t or fi not in best_in:
                         continue
-                    (s, p), prev = best_in[fi]
-                    v = (s + cov, p + neg)
+                    (s, start, p), prev = best_in[fi]
+                    v = (s + cov, start, p + neg)
                     if ri not in new or v > new[ri]:
                         new[ri] = v
                         layer[ri] = (fi, prev)
@@ -149,7 +154,8 @@ def choose(
             back.append(layer)
             if not value:
                 return None
-        ends = [(v, ri) for ri, v in value.items() if last_ok[ri]]
+        ends = [((v[0], v[1] - (genome_len - 1 - revs[ri].end), v[2]), ri)
+                for ri, v in value.items() if last_ok[ri]]
         if not ends:
             return None
         ri = max(ends)[1]
