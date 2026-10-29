@@ -153,3 +153,14 @@ def test_choose_prefers_reaching_the_ends() -> None:
     revs = [_p("-", 830, 10), dataclasses.replace(_p("-", 980, 10), penalty=1.0)]
     path = choose(fwds, revs, 1, geom, _params(n_amplicons=1), 1000)
     assert [(f.start, r.start) for f, r in path] == [(0, 980)]
+
+
+def test_no_fit_suggests_a_smaller_n_that_works() -> None:
+    rows = [(i, s[:2000] + "N" * 1500 + s[3500:]) for i, s in make_genome_family()]
+    prepared = _prepare(rows)
+    with pytest.raises(PipelineError) as exc:
+        tile(*prepared, _params(n_amplicons=10))
+    hint = str(exc.value).split("try -n ", 1)[1]
+    suggested = [int(x) for x in hint.split(", ")]
+    assert suggested and all(m < 10 for m in suggested)
+    assert len(tile(*prepared, _params(n_amplicons=suggested[0])).amplicons) == suggested[0]

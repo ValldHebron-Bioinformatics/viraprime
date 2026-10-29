@@ -61,3 +61,9 @@ def test_limits_from_env(monkeypatch) -> None:
     monkeypatch.setenv("VIRAPRIME_TIMEOUT_S", "30")
     limits = Limits.from_env()
     assert limits.max_seqs == 50 and limits.timeout_s == 30.0 and limits.workers == 2
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", float("inf")])
+def test_non_finite_numbers_rejected(value) -> None:
+    with pytest.raises(ValueError, match="number"):
+        build_argv("tile", {"max_tm_diff": value})

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ class Limits:
     max_seqs: int = 500
     max_seq_len: int = 35_000
     max_amplicons: int = 200
+    max_queue: int = 20
     workers: int = 2
     timeout_s: float = 900
     retention_s: float = 86_400
@@ -77,6 +79,8 @@ def _number(key: str, value: object, kind: type) -> str:
         raise ValueError(f"setting {key} must be a number")
     try:
         number = kind(value) if kind is float else int(str(value))
+        if not math.isfinite(number):
+            raise ValueError
     except ValueError:
         what = "a whole number" if kind is int else "a number"
         raise ValueError(f"setting {key} must be {what}") from None

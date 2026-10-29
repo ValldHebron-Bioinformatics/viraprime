@@ -100,7 +100,7 @@ docker run --rm -p 7860:7860 viraprime-web     # http://localhost:7860
 
 Limits can be changed with environment variables: `VIRAPRIME_MAX_SEQS` (500),
 `VIRAPRIME_MAX_SEQ_LEN` (35000), `VIRAPRIME_MAX_UPLOAD_MB` (20), `VIRAPRIME_MAX_AMPLICONS` (200),
-`VIRAPRIME_WORKERS` (2), `VIRAPRIME_TIMEOUT_S` (900), `VIRAPRIME_RETENTION_S` (86400) and
+`VIRAPRIME_WORKERS` (2), `VIRAPRIME_MAX_QUEUE` (20), `VIRAPRIME_TIMEOUT_S` (900), `VIRAPRIME_RETENTION_S` (86400) and
 `VIRAPRIME_JOBS_DIR`.
 
 ### Put it online (Hugging Face Space)

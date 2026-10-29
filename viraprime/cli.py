@@ -144,6 +144,8 @@ def _design_problems(a: argparse.Namespace) -> list[str]:
         problems.append("--tm-min <= --tm-opt <= --tm-max is required")
     if not 1 <= a.primer_len_min <= a.primer_len_max:
         problems.append("1 <= --primer-len-min <= --primer-len-max is required")
+    if a.primer_len_max > 36:
+        problems.append("--primer-len-max must be at most 36 (primer3's limit)")
     if not 0 <= a.gc_min <= a.gc_max <= 100:
         problems.append("0 <= --gc-min <= --gc-max <= 100 is required")
     if a.length_tolerance <= 0:

@@ -219,11 +219,15 @@ def _no_fit(
     a = _ref(cmap, cons, gap[1], "start") or gap[1] + 1
     b = _ref(cmap, cons, gap[2], "end") or gap[2] + 1
     limit = max_amplicons(genome_len, params.overlap, params.len_max)
-    works = []
-    for m in range(max(1, n - 3), min(limit, n + 3) + 1):
+    # a primer-free stretch is bridged by fewer, longer amplicons: look below n first
+    tries = [n - 1, n - 2, n - 3, n // 2, n // 3, n // 4, n + 1, n + 2, n + 3]
+    works: list[str] = []
+    for m in dict.fromkeys(m for m in tries if 1 <= m <= limit and m != n):
         g = geometry(genome_len, m, params.overlap, TOLERANCES[-1], params.len_max)
-        if m != n and g and choose(fwds, revs, m, g, params, genome_len):
+        if g and choose(fwds, revs, m, g, params, genome_len):
             works.append(str(m))
+            if len(works) == 3:
+                break
     hint = ", ".join(works) if works else "a different value"
     return PipelineError(
         f"No tiling with {n} amplicons: no acceptable primers between {a:,} and {b:,}; try -n {hint}"

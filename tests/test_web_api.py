@@ -118,3 +118,37 @@ def test_viraprime_web_help(capsys) -> None:
     assert exc.value.code == 0
     out = capsys.readouterr().out
     assert "--port" in out and "--no-browser" in out
+
+
+def test_primer_length_capped(client: TestClient) -> None:
+    r = _post(client, "tile", {"amplicons": 1, "primer_len_max": 15000})
+    assert r.status_code == 400 and "--primer-len-max" in r.json()["detail"]
+
+
+def test_busy_queue_returns_503(tmp_path: Path) -> None:
+    from tests.test_web_jobs import fake_job
+
+    app = create_app(tmp_path / "jobs", Limits(workers=1, max_queue=1), target=fake_job)
+    app.state.manager.start = lambda: None  # keep jobs queued
+    with TestClient(app) as c:
+        assert _post(c, "tile", {"amplicons": 4}).status_code == 200
+        r = _post(c, "tile", {"amplicons": 4})
+        assert r.status_code == 503 and "busy" in r.json()["detail"]
+
+
+def test_oversized_body_rejected_before_parsing(tmp_path: Path) -> None:
+    with TestClient(create_app(tmp_path / "jobs", Limits(max_upload_mb=1))) as c:
+        big = ">a\n" + "A" * (3 * 1024 * 1024) + "\n"
+        r = c.post("/api/jobs", files={"fasta": ("big.fa", big.encode(), "text/plain")},
+                   data={"mode": "tile", "params": '{"amplicons": 2}'})
+        assert r.status_code == 413
+
+
+def test_only_installed_aligners(client: TestClient, monkeypatch) -> None:
+    import shutil
+
+    real = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda name: None if name == "muscle" else real(name))
+    assert client.get("/api/limits").json()["aligners"] == ["mafft"]
+    r = _post(client, "tile", {"amplicons": 4, "aligner": "muscle"})
+    assert r.status_code == 400 and "MUSCLE is not installed" in r.json()["detail"]

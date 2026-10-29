@@ -88,3 +88,51 @@ def test_cleanup(tmp_path: Path) -> None:
         pass
     else:
         raise AssertionError("expired job should be unknown")
+
+
+def job_with_grandchild(job_dir: Path, argv: list[str]) -> None:
+    """Starts a long subprocess (like MAFFT), records its pid, then waits."""
+    import subprocess
+
+    child = subprocess.Popen(["sleep", "60"])
+    (Path(job_dir) / "child.pid").write_text(str(child.pid))
+    child.wait()
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:  # a zombie is dead for our purposes
+        return Path(f"/proc/{pid}/stat").read_text().split()[2] != "Z"
+    except OSError:
+        return False
+
+
+def test_timeout_kills_the_aligner_too(tmp_path: Path) -> None:
+    mgr = JobManager(tmp_path, Limits(workers=1, timeout_s=2), target=job_with_grandchild)
+    job = mgr.submit({}, [])
+    deadline = time.time() + 20
+    while not (tmp_path / job / "child.pid").exists() and time.time() < deadline:
+        mgr.tick()
+        time.sleep(0.05)
+    pid = int((tmp_path / job / "child.pid").read_text())
+    st = _wait(mgr, job, {"failed", "done"})
+    assert st["status"] == "failed"
+    time.sleep(0.5)
+    assert not _alive(pid)
+
+
+def test_queue_is_capped(tmp_path: Path) -> None:
+    from viraprime.web.jobs import QueueFull
+
+    mgr = JobManager(tmp_path, Limits(workers=1, max_queue=2), target=fake_job)
+    mgr.submit({}, ["0"])
+    mgr.submit({}, ["0"])
+    try:
+        mgr.submit({}, ["0"])
+    except QueueFull:
+        pass
+    else:
+        raise AssertionError("third queued job should be refused")

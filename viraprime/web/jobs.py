@@ -11,6 +11,7 @@ import json
 import multiprocessing
 import os
 import shutil
+import signal
 import sys
 import threading
 import time
@@ -84,6 +85,23 @@ def run_job(job_dir: Path, argv: list[str]) -> None:
     (job_dir / "result.json").write_text(json.dumps(result))
 
 
+class QueueFull(Exception):
+    """Too many jobs are waiting."""
+
+
+def _launch(target: Target, job_dir: Path, argv: list[str]) -> None:
+    """Run the job in its own process group, so a timeout can stop the aligner too."""
+    os.setpgrp()
+    target(job_dir, argv)
+
+
+def _kill_group(process: Any) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        process.kill()
+
+
 @dataclass
 class _Job:
     id: str
@@ -111,6 +129,9 @@ class JobManager:
         self._thread: threading.Thread | None = None
 
     def submit(self, files: dict[str, bytes], argv: list[str]) -> str:
+        with self._lock:
+            if len(self._queue) >= self.limits.max_queue:
+                raise QueueFull(len(self._queue))
         job_id = uuid.uuid4().hex
         job_dir = self.root / job_id
         job_dir.mkdir()
@@ -142,7 +163,7 @@ class JobManager:
                     job.process.join()
                     self._finish(job)
                 elif now - job.started > self.limits.timeout_s:
-                    job.process.terminate()
+                    _kill_group(job.process)
                     job.process.join(5)
                     minutes = self.limits.timeout_s / 60
                     self._finish(job, f"took longer than {minutes:g} minutes and was stopped; "
@@ -150,8 +171,8 @@ class JobManager:
             free = self.limits.workers - sum(j.state == "running" for j in self._jobs.values())
             while free > 0 and self._queue:
                 job = self._jobs[self._queue.popleft()]
-                job.process = self._ctx.Process(target=self.target, args=(job.dir, job.argv),
-                                                daemon=True)
+                job.process = self._ctx.Process(target=_launch,
+                                                args=(self.target, job.dir, job.argv), daemon=True)
                 job.process.start()
                 job.state, job.started = "running", time.time()
                 free -= 1
@@ -230,4 +251,4 @@ class JobManager:
         with self._lock:
             for job in self._jobs.values():
                 if job.state == "running" and job.process.is_alive():
-                    job.process.terminate()
+                    _kill_group(job.process)

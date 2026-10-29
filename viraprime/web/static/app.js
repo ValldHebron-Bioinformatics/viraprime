@@ -723,6 +723,10 @@
     document.querySelectorAll('[data-limit]').forEach((s) => { s.textContent = fmt(limits[s.dataset.limit]); });
     document.querySelectorAll('[data-retention]').forEach((s) => { s.textContent = `${fmt(limits.retention_hours)} hours`; });
     $('amplicons').max = limits.max_amplicons;
+    Array.from($('aligner').options).forEach((o) => {
+      o.disabled = !(limits.aligners || []).includes(o.value);
+      if (o.disabled) o.textContent += ' (not installed here)';
+    });
   }).catch(() => {});
 
   state.page = location.hash === '#check' ? 'check' : 'design';

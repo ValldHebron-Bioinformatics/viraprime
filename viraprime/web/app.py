@@ -7,12 +7,14 @@ import io
 import json
 import os
 import re
+import shutil
 import tempfile
 import zipfile
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi import Request
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from viraprime import __version__
@@ -20,7 +22,7 @@ from viraprime.check import load_assays
 from viraprime.cli import parse_args, validate_args
 from viraprime.models import PipelineError
 from viraprime.tiling import max_amplicons, target_length
-from viraprime.web.jobs import OUTPUT_FILES, JobManager, Target, run_job
+from viraprime.web.jobs import OUTPUT_FILES, JobManager, QueueFull, Target, run_job
 from viraprime.web.params import MODES, Limits, build_argv, validate_upload
 
 STATIC = Path(__file__).parent / "static"
@@ -30,6 +32,10 @@ JOB_ID = re.compile(r"^[0-9a-f]{32}$")
 def _usage_message(stderr: str) -> str:
     lines = [ln for ln in stderr.splitlines() if "error: " in ln]
     return lines[-1].split("error: ", 1)[1] if lines else "invalid settings"
+
+
+def _aligners() -> list[str]:
+    return [name for name in ("mafft", "muscle") if shutil.which(name)]
 
 
 def _bad(message: str) -> HTTPException:
@@ -54,6 +60,16 @@ def create_app(
     app = FastAPI(title="viraprime", version=__version__, lifespan=lifespan)
     app.state.manager = manager
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    max_body = int(limits.max_upload_mb * 1024 * 1024) + 256 * 1024  # file plus form fields
+
+    @app.middleware("http")
+    async def refuse_large_bodies(request: Request, call_next):
+        size = request.headers.get("content-length", "")
+        if request.method == "POST" and size.isdigit() and int(size) > max_body:
+            return JSONResponse(status_code=413, content={"detail": (
+                f"The upload is larger than {limits.max_upload_mb:g} MB; "
+                "use the command line for larger inputs.")})
+        return await call_next(request)
 
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
@@ -64,7 +80,7 @@ def create_app(
         return (STATIC / "example.fasta").read_text()
 
     @app.get("/api/limits")
-    def get_limits() -> dict[str, float]:
+    def get_limits() -> dict[str, object]:
         return {
             "max_upload_mb": limits.max_upload_mb,
             "max_seqs": limits.max_seqs,
@@ -72,6 +88,7 @@ def create_app(
             "max_amplicons": limits.max_amplicons,
             "retention_hours": limits.retention_s / 3600,
             "timeout_minutes": limits.timeout_s / 60,
+            "aligners": _aligners(),
         }
 
     @app.post("/api/jobs")
@@ -114,6 +131,9 @@ def create_app(
             raise _bad(_usage_message(stderr.getvalue())) from None
         except PipelineError as exc:
             raise _bad(str(exc)) from None
+        if args.aligner not in _aligners():
+            raise _bad(f"{args.aligner.upper()} is not installed on this server; use "
+                       f"{' or '.join(a.upper() for a in _aligners()) or 'the command line'}.")
 
         with tempfile.TemporaryDirectory() as tmp:
             upload = Path(tmp) / "input.fasta"
@@ -141,7 +161,12 @@ def create_app(
                 except PipelineError as exc:
                     raise _bad(str(exc).replace(str(primers), "primers")) from None
                 files["primers.tsv"] = primers_text.encode()
-        return {"id": manager.submit(files, argv)}
+        try:
+            return {"id": manager.submit(files, argv)}
+        except QueueFull:
+            raise HTTPException(status_code=503, detail=(
+                "The server is busy: too many jobs are waiting. Try again in a few minutes, "
+                "or use the command line.")) from None
 
     def _job(job_id: str) -> None:
         if not JOB_ID.match(job_id):
