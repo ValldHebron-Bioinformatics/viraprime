@@ -13,3 +13,4 @@ site/assets/
 # Local Claude Code / skills setup
 .claude/
 skills-lock.json
+tests/browser/node_modules/
