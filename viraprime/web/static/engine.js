@@ -188,8 +188,12 @@
     };
   }
 
-  // The server engine when this page is served by viraprime web / Docker, else the browser.
+  // The server engine when this page is served by viraprime web / Docker (the server marks the
+  // page with <meta name="viraprime-server">), else the browser.
   async function pickEngine() {
+    const marked = typeof document !== 'undefined'
+      && document.querySelector('meta[name="viraprime-server"]');
+    if (!marked) return createBrowserEngine(); // GitHub Pages or any static copy of the page
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
     const timer = setTimeout(() => controller && controller.abort(), 2000);
     try {

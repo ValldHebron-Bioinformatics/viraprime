@@ -5,6 +5,7 @@
   const fmt = (n) => Number(n).toLocaleString('en-US');
   const pct = (n) => `${Number(n).toFixed(Number(n) % 1 ? 1 : 0)} %`;
 
+  const LARGE_INPUT = 3000000; // total bases above which the browser engine asks first
   const STAGES = {
     aligning: 'Aligning your sequences…',
     'finding primers': 'Finding candidate primers along the genome…',
@@ -19,7 +20,8 @@
     check: ['check.tsv', 'report.txt', 'alignment.fasta'],
   };
 
-  const state = { page: 'design', seqs: null, limits: null, job: null, map: null, result: null };
+  const state = { page: 'design', seqs: null, limits: null, job: null, map: null, result: null,
+    engine: null, handle: null, hasResults: false, lastJob: null };
 
   // ---------- mode ----------
   const mode = () => (state.page === 'check' ? 'check' : $('use-regions').checked ? 'regions' : 'tile');
@@ -103,6 +105,7 @@
     parsed.ids.forEach((id) => ref.add(new Option(id, id)));
     updateHint();
     if (!state.job) showIdle();
+    if (state.engine && state.engine.warmup) state.engine.warmup();
   }
 
   function clearSeqs() {
@@ -299,20 +302,24 @@
     }
   }
 
-  function showProgress(st) {
+  function showProgress(ev) {
     resetResults();
     $('empty').hidden = true;
     drawPlan();
     $('progress').hidden = false;
+    $('cancel').hidden = false;
     $('verdict').className = 'verdict plan';
-    $('verdict').textContent = 'Working on it. You can leave this page open or come back to this address later.';
+    $('verdict').textContent = state.engine && state.engine.name === 'browser'
+      ? 'Working on it on your computer. Keep this tab open.'
+      : 'Working on it. You can leave this page open or come back to this address later.';
     let label;
-    if (st.status === 'queued') label = st.queue_position > 1 ? `Waiting for a free slot (${st.queue_position - 1} job${st.queue_position > 2 ? 's' : ''} ahead)` : 'Waiting for a free slot';
-    else label = STAGES[st.stage] || 'Starting…';
+    if (ev.phase === 'loading') label = `Preparing the analysis tools: ${ev.stage || 'starting'}…`;
+    else if (ev.phase === 'queued') label = ev.queuePosition > 1 ? `Waiting for a free slot (${ev.queuePosition - 1} job${ev.queuePosition > 2 ? 's' : ''} ahead)` : 'Waiting for a free slot…';
+    else label = STAGES[ev.stage] || 'Starting…';
     $('progress-label').textContent = label;
-    const value = Math.round((st.progress || 0) * 100);
+    const value = Math.round((ev.progress || 0) * 100);
     $('bar').setAttribute('aria-valuenow', value);
-    $('bar-fill').style.width = `${Math.max(value, st.status === 'queued' ? 0 : 3)}%`;
+    $('bar-fill').style.width = `${Math.max(value, ev.phase === 'queued' ? 0 : 3)}%`;
   }
 
   function reasons(notCovered) {
@@ -417,22 +424,19 @@
     $('table-wrap').hidden = false;
   }
 
-  function renderDownloads(jobId, m, orderList) {
+  function renderDownloads(outcome, orderList) {
     const row = $('dl-row');
     row.textContent = '';
-    FILES[m].forEach((name) => {
+    const link = ({ name, href }, label) => {
       const a = document.createElement('a');
       a.className = 'btn btn-quiet';
-      a.href = `/api/jobs/${jobId}/files/${name}`;
+      a.href = href;
       a.download = name;
-      a.textContent = name;
+      a.textContent = label || name;
       row.append(a);
-    });
-    const zip = document.createElement('a');
-    zip.className = 'btn btn-quiet';
-    zip.href = `/api/jobs/${jobId}/zip`;
-    zip.textContent = 'All files (.zip)';
-    row.append(zip);
+    };
+    outcome.downloads.forEach((d) => link(d));
+    if (outcome.zip) link(outcome.zip, 'All files (.zip)');
     if (orderList) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -507,7 +511,7 @@
       }),
     );
     const order = rows.flatMap((r) => [`${r.forward_name}\t${r.forward_seq}`, `${r.reverse_name}\t${r.reverse_seq}`]).join('\n');
-    renderDownloads(st.id, 'tile', order);
+    renderDownloads(st, order);
   }
 
   function renderPairs(st, res, m) {
@@ -556,7 +560,7 @@
       if (keyOf.has(r)) tr.addEventListener('mouseenter', () => select(keyOf.get(r)));
       return tr;
     }));
-    renderDownloads(st.id, m, null);
+    renderDownloads(st, null);
   }
 
   function renderResult(st) {
@@ -568,11 +572,35 @@
       verdict.className = 'verdict failed';
       verdict.textContent = `The run stopped: ${st.error || 'something went wrong.'}`;
       renderNotes(res.warnings);
+      showRetry();
       return;
     }
     if (res.mode === 'tile') renderTile(st, res);
     else renderPairs(st, res, res.mode);
     renderNotes(res.warnings);
+  }
+
+  function showRetry() {
+    const ul = $('notes');
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-quiet';
+    btn.textContent = 'Retry';
+    btn.addEventListener('click', () => { if (state.lastJob) startRun(state.lastJob); });
+    li.append(btn);
+    ul.append(li);
+    ul.hidden = false;
+  }
+
+  function showFailure(message) {
+    resetResults();
+    $('empty').hidden = true;
+    const verdict = $('verdict');
+    verdict.className = 'verdict failed';
+    verdict.textContent = message;
+    $('notes').textContent = '';
+    showRetry();
   }
 
   // ---------- running a job ----------
@@ -621,60 +649,55 @@
       $('primers').focus();
       return;
     }
-    const body = new FormData();
-    body.append('mode', m);
-    body.append('params', JSON.stringify(settings(m)));
-    body.append('fasta', new Blob([state.seqs.text], { type: 'text/plain' }), 'input.fasta');
+    let primers = '';
     if (m === 'check') {
-      const tsv = $('primers').value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-        .map((l) => l.split(/\s+/).join('\t')).join('\n');
-      body.append('primers_text', `${tsv}\n`);
+      primers = `${$('primers').value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+        .map((l) => l.split(/\s+/).join('\t')).join('\n')}\n`;
     }
-    $('run').disabled = true;
-    try {
-      const response = await fetch('/api/jobs', { method: 'POST', body });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        formError(data.detail || 'The server could not start the job.');
-        $('run').disabled = false;
-        return;
-      }
-      history.replaceState(null, '', `?job=${data.id}#${state.page}`);
-      follow(data.id);
-    } catch (err) {
-      formError('Could not reach the server. Check your connection and try again.');
-      $('run').disabled = false;
+    if (state.engine.name === 'browser') {
+      const bases = state.seqs.lens.reduce((a, b) => a + b, 0);
+      if (bases > LARGE_INPUT && !window.confirm('This may take several minutes and use a lot of memory on your computer. For large sets, the command line is faster.\n\nRun it here anyway?')) return;
     }
+    startRun({ mode: m, settings: settings(m), fasta: state.seqs.text, primers });
   }
 
-  async function follow(jobId) {
-    state.job = jobId;
+  function onEvent(ev) {
+    if (ev.jobId && state.engine.name === 'server' && !new URLSearchParams(location.search).get('job')) {
+      history.replaceState(null, '', `?job=${ev.jobId}#${state.page}`);
+    }
+    showProgress(ev);
+  }
+
+  async function startRun(job, resumeId) {
+    state.lastJob = job || state.lastJob;
+    state.job = true;
     $('run').disabled = true;
-    let st;
+    formError('');
+    showProgress({ phase: state.engine.name === 'browser' ? 'loading' : 'queued', progress: 0 });
+    const handle = resumeId ? state.engine.resume(resumeId, onEvent) : state.engine.run(job, onEvent);
+    state.handle = handle;
     try {
-      const response = await fetch(`/api/jobs/${jobId}`);
-      if (response.status === 404) {
-        state.job = null;
-        $('run').disabled = false;
-        showIdle();
-        $('verdict').className = 'verdict failed';
-        $('verdict').textContent = `That job is no longer available: results are kept for ${state.limits ? state.limits.retention_hours : 24} hours.`;
-        return;
-      }
-      st = await response.json();
-    } catch (err) {
-      setTimeout(() => follow(jobId), 3000);
-      return;
-    }
-    if (st.status === 'done' || st.status === 'failed') {
-      state.job = null;
-      $('run').disabled = false;
-      renderResult(st);
+      const outcome = await handle.promise;
+      state.hasResults = state.engine.name === 'browser';
+      renderResult(outcome);
       $('results').focus({ preventScroll: true });
-      return;
+    } catch (err) {
+      if (err.cancelled) {
+        showIdle();
+        $('verdict').className = 'verdict plan';
+        $('verdict').textContent = 'Cancelled. Change the settings or run it again.';
+      } else if (err.invalid) {
+        showIdle();
+        formError(err.message);
+      } else {
+        showFailure(err.message);
+      }
+    } finally {
+      state.job = null;
+      state.handle = null;
+      $('run').disabled = false;
+      $('cancel').hidden = true;
     }
-    showProgress(st);
-    setTimeout(() => follow(jobId), 1000);
   }
 
   // ---------- wiring ----------
@@ -697,7 +720,7 @@
   $('file').addEventListener('change', (e) => readFile(e.target.files[0]));
   $('clear').addEventListener('click', clearSeqs);
   $('example').addEventListener('click', async () => {
-    const r = await fetch('/api/example');
+    const r = await fetch(state.engine && state.engine.name === 'server' ? '/api/example' : 'example.fasta');
     if (r.ok) loadText('Example: 24 synthetic genomes', await r.text());
   });
   let pasteTimer;
@@ -718,19 +741,38 @@
   drop.addEventListener('drop', (e) => { e.preventDefault(); readFile(e.dataTransfer.files[0]); });
   $('results').tabIndex = -1;
 
-  fetch('/api/limits').then((r) => r.json()).then((limits) => {
+  $('cancel').addEventListener('click', () => { if (state.handle) state.handle.cancel(); });
+  window.addEventListener('beforeunload', (e) => {
+    if (state.job || state.hasResults) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
+  function applyLimits(limits) {
     state.limits = limits;
-    document.querySelectorAll('[data-limit]').forEach((s) => { s.textContent = fmt(limits[s.dataset.limit]); });
-    document.querySelectorAll('[data-retention]').forEach((s) => { s.textContent = `${fmt(limits.retention_hours)} hours`; });
+    document.querySelectorAll('[data-limit]').forEach((el) => { el.textContent = fmt(limits[el.dataset.limit]); });
     $('amplicons').max = limits.max_amplicons;
     Array.from($('aligner').options).forEach((o) => {
       o.disabled = !(limits.aligners || []).includes(o.value);
-      if (o.disabled) o.textContent += ' (not installed here)';
+      if (o.disabled && !/not available/.test(o.textContent)) o.textContent += ' (not available here)';
     });
-  }).catch(() => {});
+  }
 
   state.page = location.hash === '#check' ? 'check' : 'design';
   applyMode();
-  const jobId = new URLSearchParams(location.search).get('job');
-  if (jobId && /^[0-9a-f]{32}$/.test(jobId)) follow(jobId);
+  $('run').disabled = true;
+  window.ViraEngines.pickEngine().then(async (engine) => {
+    state.engine = engine;
+    applyLimits(await engine.limits());
+    const note = $('privacy');
+    if (engine.name === 'browser') {
+      note.textContent = 'Runs on your computer — your sequences are not uploaded. The first run loads the analysis tools (about 20 MB); your browser keeps them for next time.';
+    } else {
+      note.textContent = `Files are deleted ${fmt(state.limits.retention_hours)} hours after your job finishes. For private or larger data, use the command line.`;
+    }
+    $('run').disabled = false;
+    const jobId = new URLSearchParams(location.search).get('job');
+    if (engine.name === 'server' && jobId && /^[0-9a-f]{32}$/.test(jobId)) startRun(null, jobId);
+  });
 })();

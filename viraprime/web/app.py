@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi import Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from viraprime import __version__
@@ -52,6 +52,7 @@ def create_app(
     app = FastAPI(title="viraprime", version=__version__, lifespan=lifespan)
     app.state.manager = manager
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    static_files = {p.name for p in STATIC.iterdir() if p.is_file() and p.name != "index.html"}
     max_body = int(limits.max_upload_mb * 1024 * 1024) + 256 * 1024  # file plus form fields
 
     @app.middleware("http")
@@ -63,9 +64,21 @@ def create_app(
                 "use the command line for larger inputs.")})
         return await call_next(request)
 
+    page = (STATIC / "index.html").read_text().replace(
+        '<meta charset="utf-8">',
+        '<meta charset="utf-8">\n<meta name="viraprime-server" content="1">', 1)
+
     @app.get("/", include_in_schema=False)
-    def index() -> FileResponse:
-        return FileResponse(STATIC / "index.html")
+    def index() -> HTMLResponse:
+        """The page, marked so it uses this server instead of running in the browser."""
+        return HTMLResponse(page)
+
+    @app.get("/{name}", include_in_schema=False)
+    def page_file(name: str) -> FileResponse:
+        """The page's own files at the root too, so its relative links work here and on Pages."""
+        if name not in static_files:
+            raise HTTPException(status_code=404, detail="not found")
+        return FileResponse(STATIC / name)
 
     @app.get("/api/example", response_class=PlainTextResponse)
     def example() -> str:
