@@ -60,7 +60,7 @@
 
 **Files:** Create `tools/build_wasm.sh`, `site/app/engine/` (built files), `site/app/engine/README.md` (what each file is, versions, licences, how to rebuild).
 
-**Interfaces — Produces:** `site/app/engine/primer3_py-2.2.0-cp312-cp312-pyodide_2024_0_wasm32.whl`; `site/app/engine/mafft-disttbfast.js` (ES module, default export `createMafft(moduleArg)`), `site/app/engine/mafft-disttbfast.wasm`.
+**Interfaces — Produces:** `site/app/engine/primer3_py-2.2.0-cp312-cp312-pyodide_2024_0_wasm32.whl`; `site/app/engine/mafft-disttbfast.js` (classic script defining `createMafft`; CommonJS export in Node), `site/app/engine/mafft-disttbfast.wasm`.
 
 - [ ] **Step 1: Write** `tools/build_wasm.sh` (bash, `set -euo pipefail`, work dir under `${TMPDIR:-/tmp}/viraprime-wasm`): creates a Python 3.12 venv with `pyodide-build`; `pyodide xbuildenv install 0.27.7` and `install-emscripten`; downloads the primer3-py 2.2.0 sdist, `pyodide build .`, copies the wheel renamed to the `pyodide_2024_0_wasm32` tag; downloads `https://gitlab.com/sysimm/mafft/-/archive/v7.520/mafft-v7.520.tar.gz`, `make clean`, then `emmake make disttbfast CC=emcc LIBS=-lm CFLAGS="-O3 -Wno-error=implicit-function-declaration" LDFLAGS="-O3 -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createMafft -sENVIRONMENT=web,worker,node -sINVOKE_RUN=0 -sWASM_ASYNC_COMPILATION=0 -sFORCE_FILESYSTEM=1 -sEXPORTED_RUNTIME_METHODS=FS,callMain -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4GB"`, and copies `disttbfast` / `disttbfast.wasm` to `site/app/engine/mafft-disttbfast.js` / `.wasm`. Uses `EMSDK_PYTHON` from the venv (base conda's Python 3.8 is too old).
 - [ ] **Step 2: Write** `site/app/engine/README.md`.
