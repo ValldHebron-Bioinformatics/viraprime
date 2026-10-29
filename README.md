@@ -103,10 +103,13 @@ Limits can be changed with environment variables: `VIRAPRIME_MAX_SEQS` (500),
 `VIRAPRIME_WORKERS` (2), `VIRAPRIME_MAX_QUEUE` (20), `VIRAPRIME_TIMEOUT_S` (900), `VIRAPRIME_RETENTION_S` (86400) and
 `VIRAPRIME_JOBS_DIR`.
 
-### Put it online (Hugging Face Space)
+### Put it online (Hugging Face Space, free)
+
+The Space runs the same web app with the **Gradio** SDK, which is free: Hugging Face installs
+MAFFT from `deploy/hf-space/packages.txt` and starts `deploy/hf-space/app.py`.
 
 1. Create a free account at [huggingface.co](https://huggingface.co), then **New Space**: any
-   name, SDK **Docker**, template **Blank**, hardware **CPU basic** (free).
+   name, SDK **Gradio**, template **Blank**, hardware **CPU basic** (free).
 2. Create an access token with **write** permission (Settings → Access Tokens).
 3. In this GitHub repository, Settings → Secrets and variables → Actions: add the secret
    `HF_TOKEN` (the token) and the variable `HF_SPACE` (`<owner>/<space name>`).

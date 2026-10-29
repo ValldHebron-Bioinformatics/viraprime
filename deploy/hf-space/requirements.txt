@@ -1,0 +1,5 @@
+biopython>=1.81
+primer3-py>=2.0
+fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.9

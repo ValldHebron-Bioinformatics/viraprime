@@ -1,6 +1,7 @@
 name: Deploy web app to Hugging Face
 
-# Pushes the web app (Dockerfile + package) to a Hugging Face Docker Space.
+# Pushes the web app to a free Hugging Face Gradio Space: deploy/hf-space/ (app.py,
+# requirements.txt, packages.txt with MAFFT, README with the Space settings) plus viraprime/.
 # One-time setup in GitHub > Settings > Secrets and variables > Actions:
 #   secret   HF_TOKEN  = a Hugging Face access token with write access
 #   variable HF_SPACE  = <owner>/<space>, e.g. my-lab/viraprime
@@ -9,7 +10,7 @@ name: Deploy web app to Hugging Face
 on:
   push:
     branches: [master]
-    paths: ["viraprime/**", "Dockerfile", "pyproject.toml", ".github/workflows/space.yml"]
+    paths: ["viraprime/**", "deploy/hf-space/**", ".github/workflows/space.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -39,22 +40,9 @@ jobs:
       - name: Assemble the Space
         if: steps.cfg.outputs.ready == 'true'
         run: |
-          mkdir deploy
-          cp Dockerfile .dockerignore pyproject.toml deploy/
-          tar --exclude=__pycache__ -cf - viraprime | tar -xf - -C deploy
-          cat > deploy/README.md <<'EOF'
-          ---
-          title: viraprime
-          colorFrom: green
-          colorTo: gray
-          sdk: docker
-          app_port: 7860
-          pinned: false
-          short_description: Tile a genome with primers that fit every sequence
-          ---
-
-          viraprime web app. Source: https://github.com/ValldHebron-Bioinformatics/viraprime
-          EOF
+          mkdir space
+          cp deploy/hf-space/* space/
+          tar --exclude=__pycache__ -cf - viraprime | tar -xf - -C space
 
       - name: Upload to Hugging Face
         if: steps.cfg.outputs.ready == 'true'
@@ -64,7 +52,7 @@ jobs:
           import os
           from huggingface_hub import HfApi
           HfApi(token=os.environ["HF_TOKEN"]).upload_folder(
-              repo_id=os.environ["HF_SPACE"], repo_type="space", folder_path="deploy",
+              repo_id=os.environ["HF_SPACE"], repo_type="space", folder_path="space",
               commit_message=f"Deploy {os.environ['GITHUB_SHA'][:7]}",
               delete_patterns=["viraprime/**"],
           )
