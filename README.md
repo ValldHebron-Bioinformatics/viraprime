@@ -85,13 +85,11 @@ A "Check my primers" tab tests pairs you already have.
 
 The analysis runs **in your browser**: viraprime, primer3 and MAFFT are compiled to
 WebAssembly, so your sequences are never uploaded and nothing needs installing. The first run
-loads about 20 MB of tools, which the browser keeps for later visits. The design steps are
-the same code as the command line; the alignment can differ. The browser always aligns with
-MAFFT's FFT-NS-2, while the command line runs `mafft --auto`, which uses FFT-NS-2 only for
-sequences of 10,000 bases or more (or 500 sequences or more) and a more refined method below
-that. For such inputs the web results say so, and the command line's primers can differ
-slightly. For very large sets (hundreds of long
-genomes) the command line is faster.
+loads about 20 MB of tools, which the browser keeps for later visits. It gives the same
+results as the command line: the design steps are the same code, and the alignment runs the
+same MAFFT programs (version 7.526) with the same method choice as `mafft --auto` (L-INS-i,
+FFT-NS-i or FFT-NS-2, depending on the number and length of the sequences). For very large
+sets (hundreds of long genomes) the command line is faster.
 
 ### Run it on your own server
 
@@ -119,8 +117,8 @@ Server limits can be changed with environment variables: `VIRAPRIME_MAX_SEQS` (5
 ### How the browser version is built
 
 `tools/build_wasm.sh` rebuilds the compiled parts in `site/app/engine/` (primer3-py for
-Pyodide, MAFFT `disttbfast` for WebAssembly); `tools/build_site.py` assembles the GitHub Pages
-site, and `.github/workflows/pages.yml` deploys it on every push to master.
+Pyodide, and the MAFFT programs `mafft --auto` runs, for WebAssembly); `tools/build_site.py`
+assembles the GitHub Pages site, and `.github/workflows/pages.yml` deploys it on every push to master.
 
 ## Advanced: target regions
 

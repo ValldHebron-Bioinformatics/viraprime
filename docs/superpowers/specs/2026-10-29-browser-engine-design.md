@@ -1,5 +1,10 @@
 # Browser engine (GitHub Pages) — Design
 
+> **Update 2026-10-30:** the browser now runs MAFFT 7.526 `disttbfast`, `tbfast`, `dndpre` and
+> `dvtditr` with the method choice and arguments of `mafft --auto` (L-INS-i, FFT-NS-i or
+> FFT-NS-2), so its alignment equals the command line's. Mentions of FFT-NS-2 only and
+> MAFFT 7.520 below describe the first version.
+
 Date: 2026-10-29
 Status: approved in brainstorming, pending written-spec review
 Builds on: `2026-10-29-tiling-and-web-design.md` (tiling mode and the FastAPI web app)

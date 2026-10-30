@@ -1,5 +1,5 @@
 
-var createMafft = (() => {
+var createMafft_disttbfast = (() => {
   var _scriptName = typeof document != 'undefined' ? document.currentScript?.src : undefined;
   if (typeof __filename != 'undefined') _scriptName ||= __filename;
   return (
@@ -14,6 +14,6 @@ var Module=Object.assign({},moduleArg);var readyPromiseResolve,readyPromiseRejec
 );
 })();
 if (typeof exports === 'object' && typeof module === 'object')
-  module.exports = createMafft;
+  module.exports = createMafft_disttbfast;
 else if (typeof define === 'function' && define['amd'])
-  define([], () => createMafft);
+  define([], () => createMafft_disttbfast);

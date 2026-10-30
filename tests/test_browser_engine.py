@@ -16,7 +16,8 @@ ENGINE = Path(__file__).resolve().parent.parent / "site" / "app" / "engine"
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None
     or not (HERE / "node_modules" / "pyodide").is_dir()
-    or not (ENGINE / "mafft-disttbfast.wasm").is_file(),
+    or not all((ENGINE / f"mafft-{name}.wasm").is_file()
+               for name in ("disttbfast", "tbfast", "dndpre", "dvtditr")),
     reason="needs node, `npm install` in tests/browser and the built engine files",
 )
 

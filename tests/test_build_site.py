@@ -23,7 +23,8 @@ def test_build_site(tmp_path: Path) -> None:
     for key in ("viraprime", "primer3"):
         assert (engine / manifest[key]).is_file(), key
     assert manifest["viraprime"].startswith("viraprime-") and manifest["viraprime"].endswith(".whl")
-    assert (engine / "mafft-disttbfast.js").is_file() and (engine / "mafft-disttbfast.wasm").is_file()
+    for name in ("disttbfast", "tbfast", "dndpre", "dvtditr"):    # what `mafft --auto` runs
+        assert (engine / f"mafft-{name}.js").is_file() and (engine / f"mafft-{name}.wasm").is_file(), name
 
 
 def test_build_site_replaces_an_old_build(tmp_path: Path) -> None:

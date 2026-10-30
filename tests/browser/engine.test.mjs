@@ -21,11 +21,14 @@ const APP = path.join(site, "_site", "app");
 
 const { loadPyodide } = require(path.join(HERE, "node_modules/pyodide/pyodide.js"));
 const { createEngineCore } = require(path.join(APP, "engine-worker.js"));
+const mafft = require(path.join(APP, "mafft-runner.js"));
+const mafftFactories = Object.fromEntries(mafft.MAFFT_PROGRAMS.map(
+  (name) => [name, require(path.join(APP, `engine/mafft-${name}.js`))]));
 const core = await createEngineCore({
   loadPyodide: () => loadPyodide(),
   fetchBytes: async (rel) => new Uint8Array(fs.readFileSync(path.join(APP, rel))),
-  createMafft: require(path.join(APP, "engine/mafft-disttbfast.js")),
-  mafft: require(path.join(APP, "mafft-runner.js")),
+  mafftFactories,
+  mafft,
 });
 const genomes = fs.readFileSync(path.join(ROOT, "examples/genomes.fasta"), "utf8");
 
@@ -68,18 +71,18 @@ test("reports the same validation messages as the server", () => {
   assert.match(core.run({ mode: "tile", settings: { amplicons: 4 }, fasta: "hello", primers: "" }).error, /./);
 });
 
-test("warns when the command line would align with another method", () => {
-  // 24 genomes of 9 kb: `mafft --auto` picks FFT-NS-i on the command line, the browser FFT-NS-2
+test("aligns like the command line, so it no longer warns about the method", () => {
   const out = core.run({ mode: "tile", settings: { amplicons: 4 }, fasta: genomes, primers: "" });
-  assert.ok(out.result.warnings.some((w) => /FFT-NS-2/.test(w) && /command line/.test(w)), out.result.warnings.join(" | "));
+  assert.equal(out.result.exit_code, 0);
+  assert.ok(!out.result.warnings.some((w) => /FFT-NS|command line/.test(w)), out.result.warnings.join(" | "));
 });
 
 test("a MAFFT failure is reported clearly, out of memory included", async () => {
   const failing = await createEngineCore({
     loadPyodide: () => loadPyodide(),
     fetchBytes: async (rel) => new Uint8Array(fs.readFileSync(path.join(APP, rel))),
-    createMafft: require(path.join(APP, "engine/mafft-disttbfast.js")),
-    mafft: { makeMafftRunner: () => () => { throw new Error("MAFFT failed: Cannot allocate memory"); } },
+    mafftFactories,
+    mafft: { MAFFT_PROGRAMS: mafft.MAFFT_PROGRAMS, makeMafftRunner: () => () => { throw new Error("MAFFT failed: Cannot allocate memory"); } },
   });
   const out = failing.run({ mode: "tile", settings: { amplicons: 4 }, fasta: genomes, primers: "" });
   assert.equal(out.result.exit_code, 1);

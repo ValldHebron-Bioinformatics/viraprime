@@ -10,7 +10,7 @@
   // Python side: MAFFT as viraprime's "mafft" aligner, progress to the page, and one call that
   // checks a request exactly like the server (prepare_job), runs viraprime and builds the result.
   const SHIM = `
-import contextlib, io, json, logging, os, re, shutil, sys, traceback, zipfile
+import contextlib, io, json, os, re, shutil, sys, traceback, zipfile
 from pathlib import Path
 
 import viraprime_js
@@ -24,17 +24,10 @@ from viraprime.web.result import OUTPUT_FILES, build_result
 
 LIMITS = Limits()
 OOM = "Your browser ran out of memory. Try fewer sequences or the command line."
-log = logging.getLogger("viraprime")
 
 
 def _mafft(records):
-    # the command line runs \`mafft --auto\`, which picks a more refined method than FFT-NS-2
-    # for inputs under 10,000 bases and 500 sequences
-    longest = max(len(r.seq) for r in records)
-    if longest < 10000 and len(records) < 500:
-        log.warning("Aligned with MAFFT FFT-NS-2 (browser version). On the command line, "
-                    "mafft --auto uses a more refined method for this input, so its primers "
-                    "can differ slightly.")
+    # the same programs and arguments as \`mafft --auto\` on the command line (mafft-runner.js)
     text = "".join(f">{r.id}\\n{r.seq}\\n" for r in records)
     try:
         aligned = viraprime_js.run_mafft(text)
@@ -89,8 +82,9 @@ def run_job(mode, settings_json, fasta, primers):
 `;
 
   // loadPyodide(): a Pyodide instance; fetchBytes(relativePath): Uint8Array of a site file;
-  // createMafft: the MAFFT module factory; mafft: mafft-runner.js; report(stage, fraction).
-  async function createEngineCore({ loadPyodide, fetchBytes, createMafft, mafft, report }) {
+  // mafftFactories: {disttbfast|tbfast|dndpre|dvtditr: module factory}; mafft: mafft-runner.js;
+  // report(stage, fraction).
+  async function createEngineCore({ loadPyodide, fetchBytes, mafftFactories, mafft, report }) {
     const say = report || (() => {});
     say('Loading the analysis tools', 0.02);
     const manifest = JSON.parse(new TextDecoder().decode(await fetchBytes('engine/manifest.json')));
@@ -105,7 +99,11 @@ def run_job(mode, settings_json, fasta, primers):
     }
     micropip.destroy();
     say('Loading MAFFT', 0.9);
-    const runMafft = mafft.makeMafftRunner(createMafft, await fetchBytes('engine/mafft-disttbfast.wasm'));
+    const programs = {};
+    for (const name of mafft.MAFFT_PROGRAMS) {
+      programs[name] = { factory: mafftFactories[name], wasm: await fetchBytes(`engine/mafft-${name}.wasm`) };
+    }
+    const runMafft = mafft.makeMafftRunner(programs);
     let progress = () => {};
     py.registerJsModule('viraprime_js', {
       run_mafft: (text) => runMafft(text),
@@ -154,7 +152,12 @@ def run_job(mode, settings_json, fasta, primers):
   function ensureCore() {
     if (!core) {
       core = (async () => {
-        root.importScripts(`${PYODIDE_URL}pyodide.js`, 'engine/mafft-disttbfast.js', 'mafft-runner.js');
+        root.importScripts(`${PYODIDE_URL}pyodide.js`, 'mafft-runner.js');
+        const mafftFactories = {};
+        for (const name of root.ViraMafft.MAFFT_PROGRAMS) {
+          root.importScripts(`engine/mafft-${name}.js`); // defines createMafft_<name>
+          mafftFactories[name] = root[`createMafft_${name}`];
+        }
         return createEngineCore({
           loadPyodide: () => root.loadPyodide({ indexURL: PYODIDE_URL }),
           fetchBytes: async (rel) => {
@@ -162,7 +165,7 @@ def run_job(mode, settings_json, fasta, primers):
             if (!r.ok) throw new Error(`Failed to load ${rel} (${r.status})`);
             return new Uint8Array(await r.arrayBuffer());
           },
-          createMafft: root.createMafft,
+          mafftFactories,
           mafft: root.ViraMafft,
           report: (stage, fraction) => post({ type: 'loading', stage, progress: fraction }),
         });
