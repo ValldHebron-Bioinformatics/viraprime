@@ -4,19 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "viraprime"
-version = "0.1.0"
+version = "0.2.0"
 description = "Design consensus PCR primers from a multi-FASTA of related sequences"
 requires-python = ">=3.10"
 dependencies = ["biopython>=1.81", "primer3-py>=2.0"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "httpx"]
+web = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
 
 [project.scripts]
 viraprime = "viraprime.cli:main"
 
 [tool.setuptools]
-packages = ["viraprime"]
+packages = ["viraprime", "viraprime.web"]
+
+[tool.setuptools.package-data]
+"viraprime.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

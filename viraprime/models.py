@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 
 class PipelineError(Exception):
@@ -220,4 +221,109 @@ class CheckReport:
     mean_conservation: float
     min_coverage: float
     results: list[CheckResult]
+    log_lines: list[str]
+
+
+@dataclass(frozen=True)
+class TilingParams:
+    """Settings for tiling the whole genome with N overlapping amplicons."""
+
+    n_amplicons: int
+    overlap: int
+    tm_min: float
+    tm_opt: float
+    tm_max: float
+    max_tm_diff: float
+    len_min: int
+    len_max: int
+    gc_min: float
+    gc_max: float
+    max_mismatches: int
+    window: int
+    degenerate: bool
+    max_degeneracy: int
+    min_coverage: float
+
+    @property
+    def scoring(self) -> ScoringParams:
+        return ScoringParams(self.max_mismatches, self.window)
+
+
+@dataclass(frozen=True)
+class Geometry:
+    """Amplicon size limits for one tiling attempt (consensus positions)."""
+
+    target_len: int
+    len_min: int
+    len_max: int
+    tolerance: float
+    end_slack: int
+    max_outer_overlap: int
+
+
+@dataclass
+class PrimerCandidate:
+    """One primer considered for tiling, located on the consensus.
+
+    site is the oligo as it reads on the forward strand (the reverse primer
+    reverse-complemented); seq is the primer 5'->3' as ordered. base_seq is seq
+    before any degenerate bases were added. Bit i of mask is set when the primer
+    matches aln.ids[i].
+    """
+
+    strand: Literal["+", "-"]
+    start: int
+    length: int
+    site: str
+    base_seq: str
+    seq: str
+    tm: float
+    tm_range: tuple[float, float] | None
+    gc: float
+    penalty: float
+    mask: int = 0
+    cols: list[int] = field(default_factory=list)
+
+    @property
+    def end(self) -> int:
+        return self.start + self.length - 1
+
+
+@dataclass
+class Amplicon:
+    index: int  # 1-based
+    pool: int
+    fwd: PrimerCandidate
+    rev: PrimerCandidate
+    coverage: PairCoverage
+    below_threshold: bool
+    overlap_next: int | None  # insert overlap with the next amplicon (consensus bp)
+
+
+@dataclass
+class TilingResult:
+    amplicons: list[Amplicon]
+    geometry: Geometry
+    n_fwd: int
+    n_rev: int
+    dimer_warnings: list[str]
+    uncovered_ends: tuple[int, int]  # reference bases outside the first / last insert
+
+
+@dataclass
+class TilingReport:
+    command: str
+    params: dict[str, object]
+    n_input: int
+    median_len: float
+    min_len: int
+    max_len: int
+    length: LengthFilterResult
+    reference_id: str
+    aln_length: int
+    cons_length: int
+    n_conserved: int
+    mean_conservation: float
+    min_coverage: float
+    result: TilingResult
     log_lines: list[str]

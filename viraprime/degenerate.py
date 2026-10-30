@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import itertools
 import math
+from collections import Counter
 
 import primer3
 
 from viraprime.models import Alignment, PairCoverage, ScoringParams
-from viraprime.scoring import CODE_FOR, IUPAC, match_primer, score_pair
+from viraprime.scoring import CODE_FOR, IUPAC, ThreePrime, match_primer, score_pair
 
 BASES = "ACGT"
 
@@ -92,3 +93,62 @@ def degenerate_pair(
 
     final_sites, final_cov = best_state
     return final_sites["fwd"], final_sites["rev"], final_cov
+
+
+def degenerate_site(
+    site: str,
+    cols: list[int],
+    aln: Alignment,
+    params: ScoringParams,
+    max_fold: int,
+    three_prime: ThreePrime,
+) -> str:
+    """degenerate_pair's greedy rule for a single primer site (forward-strand orientation).
+
+    Adding a degenerate base never breaks a match, so only rows not yet matched are
+    re-scored. The 3'-terminal base is never changed; the state matching the most
+    rows (earliest on ties) is returned.
+    """
+    n = len(site)
+    terminal = n - 1 if three_prime == "right" else 0
+    # identical row slices give identical results: score each distinct slice once
+    lo, hi = cols[0], cols[-1] + 1
+    weight = Counter(row[lo:hi] for row in aln.rows)
+    offset = [c - lo for c in cols]
+
+    def misses(s: str, slices: list[str]) -> list[str]:
+        return [x for x in slices if not match_primer(s, offset, x, three_prime, params).ok]
+
+    def burden(s: str, slices: list[str]) -> int:
+        return sum(weight[x] * match_primer(s, offset, x, three_prime, params).mismatches for x in slices)
+
+    unmatched = misses(site, list(weight))
+    current = site
+    best_site, best_missing = site, sum(weight[x] for x in unmatched)
+    while unmatched:
+        current_burden = burden(current, unmatched)
+        n_missing = sum(weight[x] for x in unmatched)
+        best: tuple[tuple[int, int, int, int], str, list[str]] | None = None
+        for i in range(n):
+            if i == terminal:
+                continue
+            allowed = IUPAC[current[i]]
+            seen = {x[offset[i]] for x in unmatched}
+            for b in sorted((seen & set(BASES)) - allowed, key=BASES.index):
+                trial = current[:i] + CODE_FOR[allowed | {b}] + current[i + 1:]
+                if fold(trial) > max_fold:
+                    continue
+                still = misses(trial, unmatched)
+                gain = n_missing - sum(weight[x] for x in still)
+                removed = current_burden - burden(trial, unmatched)
+                dist = n - 1 - i if three_prime == "right" else i
+                key = (gain, removed, dist, -BASES.index(b))
+                if best is None or key > best[0]:
+                    best = (key, trial, still)
+        if best is None or (best[0][0] <= 0 and best[0][1] <= 0):
+            break
+        _, current, unmatched = best
+        missing = sum(weight[x] for x in unmatched)
+        if missing < best_missing:
+            best_site, best_missing = current, missing
+    return best_site

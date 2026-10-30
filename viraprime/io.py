@@ -19,6 +19,8 @@ from viraprime.models import (
     Record,
     RegionResult,
     RunReport,
+    TilingReport,
+    TilingResult,
 )
 from viraprime.ranking import count_reasons
 
@@ -149,7 +151,7 @@ def _region_section(res: RegionResult, min_coverage: float) -> list[str]:
     return lines
 
 
-def _header_lines(report: RunReport | CheckReport, title: str) -> list[str]:
+def _header_lines(report: RunReport | CheckReport | TilingReport, title: str) -> list[str]:
     """Title, command, parameters, input and alignment blocks shared by both reports."""
     lf = report.length
     out = [title, "=" * 24,
@@ -281,5 +283,93 @@ def write_check_report(report: CheckReport, cmap: CoordMap, path: Path) -> None:
         out.append(f"Pairs below --min-coverage ({report.min_coverage:g}%): " + ", ".join(low))
     else:
         out.append("Every pair meets --min-coverage.")
+    out += ["", "Log", "---", *report.log_lines]
+    Path(path).write_text("\n".join(out) + "\n")
+
+
+TILING_TSV_COLUMNS = [
+    "amplicon", "pool", "forward_name", "forward_seq", "reverse_name", "reverse_seq",
+    "forward_tm", "reverse_tm", "forward_gc", "reverse_gc", "forward_len", "reverse_len",
+    "degenerate", "forward_tm_range", "reverse_tm_range", "amplicon_start", "amplicon_end",
+    "amplicon_len", "overlap_next", "coverage_pct", "n_covered", "n_total",
+    "below_threshold", "not_covered",
+]
+
+
+def _names(index: int) -> tuple[str, str]:
+    return f"viraprime_{index}_LEFT", f"viraprime_{index}_RIGHT"
+
+
+def _span(first_col: int, last_col: int, cmap: CoordMap) -> tuple[int, int] | None:
+    """1-based inclusive reference span of alignment columns, or None if off the reference."""
+    try:
+        start, end = cmap.col_to_ref(first_col, "start"), cmap.col_to_ref(last_col, "end")
+    except PipelineError:
+        return None
+    return (start, end) if start <= end else None
+
+
+def write_tiling_tsv(result: TilingResult, cmap: CoordMap, path: Path) -> None:
+    """One row per amplicon, in genome order."""
+    with Path(path).open("w", newline="") as fh:
+        writer = csv.writer(fh, delimiter="\t", lineterminator="\n")
+        writer.writerow(TILING_TSV_COLUMNS)
+        for a in result.amplicons:
+            left, right = _names(a.index)
+            span = _span(a.fwd.cols[0], a.rev.cols[-1], cmap)
+            cov = a.coverage
+            writer.writerow([
+                a.index, a.pool, left, a.fwd.seq, right, a.rev.seq,
+                f"{a.fwd.tm:.1f}", f"{a.rev.tm:.1f}", f"{a.fwd.gc:.1f}", f"{a.rev.gc:.1f}",
+                a.fwd.length, a.rev.length,
+                a.fwd.tm_range is not None or a.rev.tm_range is not None,
+                _fmt_range(a.fwd.tm_range), _fmt_range(a.rev.tm_range),
+                *(span if span else ("", "")), span[1] - span[0] + 1 if span else "",
+                "" if a.overlap_next is None else a.overlap_next,
+                f"{cov.coverage_pct:.1f}", len(cov.covered), len(cov.covered) + len(cov.not_covered),
+                a.below_threshold,
+                ",".join(f"{sid}({why})" for sid, why in cov.not_covered.items()),
+            ])
+
+
+def write_scheme_bed(result: TilingResult, cmap: CoordMap, path: Path) -> None:
+    """ARTIC-style primer scheme: chrom, start, end (0-based half-open), name, pool, strand, seq."""
+    lines: list[str] = []
+    for a in result.amplicons:
+        for name, primer, strand in zip(_names(a.index), (a.fwd, a.rev), "+-"):
+            span = _span(primer.cols[0], primer.cols[-1], cmap)
+            if span is None:
+                log.warning("Primer %s is not on reference %s; left out of scheme.bed",
+                            name, cmap.reference_id)
+                continue
+            lines.append("\t".join([cmap.reference_id, str(span[0] - 1), str(span[1]), name,
+                                    str(a.pool), strand, primer.seq]))
+    Path(path).write_text("".join(line + "\n" for line in lines))
+
+
+def write_tiling_report(report: TilingReport, cmap: CoordMap, path: Path) -> None:
+    res, mc = report.result, report.min_coverage
+    g = res.geometry
+    out = _header_lines(report, "viraprime tiling report")
+    out += ["Tiling", "------",
+            f"Amplicons: {len(res.amplicons)}",
+            f"Target length: {g.target_len} bp (allowed {g.len_min}-{g.len_max}, "
+            f"±{round(g.tolerance * 100)} %)",
+            f"Candidate primers: {res.n_fwd} forward, {res.n_rev} reverse",
+            f"Not covered at the ends: {res.uncovered_ends[0]} bp (start), "
+            f"{res.uncovered_ends[1]} bp (end)", ""]
+    for a in res.amplicons:
+        span = _span(a.fwd.cols[0], a.rev.cols[-1], cmap)
+        where = f"{span[0]}-{span[1]}  {span[1] - span[0] + 1} bp" if span else "not on reference"
+        out.append(f"  {a.index} pool {a.pool}  {where}  {a.coverage.coverage_pct:.1f} %")
+        if a.below_threshold:
+            out.append("    Why sequences are missed (count):")
+            out += [f"      {reason}: {n}" for reason, n in count_reasons(a.coverage.not_covered)]
+    out += ["", "Primer dimers", "-------------"]
+    out += [f"  {w}" for w in res.dimer_warnings] or ["none"]
+    low = [str(a.index) for a in res.amplicons if a.below_threshold]
+    out += ["", "Summary", "-------",
+            f"Amplicons below {mc:g} % coverage: {', '.join(low)}" if low
+            else f"All amplicons meet {mc:g} % coverage."]
     out += ["", "Log", "---", *report.log_lines]
     Path(path).write_text("\n".join(out) + "\n")

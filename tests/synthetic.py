@@ -62,3 +62,29 @@ def make_aligned_family(seed: int = 42) -> list[tuple[str, str]]:
             seq = seq[:570] + "--" + seq[570:]
         rows.append((rid, seq))
     return rows
+
+
+def make_genome_family(
+    length: int = 6000,
+    n_seqs: int = 12,
+    seed: int = 7,
+    hyper: tuple[int, int] = (3000, 3300),
+) -> list[tuple[str, str]]:
+    """A genome-sized family with substitutions only (rows are already aligned).
+
+    g01 is the unmodified base. Every other sequence gets scattered SNPs (rate 0.003
+    per base) and each base in `hyper` (0-based, half-open) substituted with
+    probability 0.25.
+    """
+    rng = random.Random(seed)
+    base = "".join(rng.choice(BASES) for _ in range(length))
+    records: list[tuple[str, str]] = [("g01", base)]
+    lo, hi = hyper
+    for i in range(2, n_seqs + 1):
+        seq = list(base)
+        for pos in range(length):
+            p = 0.25 if lo <= pos < hi else 0.003
+            if rng.random() < p:
+                seq[pos] = _substitute(rng, seq[pos])
+        records.append((f"g{i:02d}", "".join(seq)))
+    return records

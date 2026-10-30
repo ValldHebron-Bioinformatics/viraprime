@@ -1,0 +1,208 @@
+"""The viraprime web app: a page, and a small job API around the command-line tool."""
+
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import os
+import re
+import shutil
+import tempfile
+import zipfile
+from pathlib import Path
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Request
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.staticfiles import StaticFiles
+
+from viraprime import __version__
+from viraprime.check import load_assays
+from viraprime.cli import parse_args, validate_args
+from viraprime.models import PipelineError
+from viraprime.tiling import max_amplicons, target_length
+from viraprime.web.jobs import OUTPUT_FILES, JobManager, QueueFull, Target, run_job
+from viraprime.web.params import MODES, Limits, build_argv, validate_upload
+
+STATIC = Path(__file__).parent / "static"
+JOB_ID = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _usage_message(stderr: str) -> str:
+    lines = [ln for ln in stderr.splitlines() if "error: " in ln]
+    return lines[-1].split("error: ", 1)[1] if lines else "invalid settings"
+
+
+def _aligners() -> list[str]:
+    return [name for name in ("mafft", "muscle") if shutil.which(name)]
+
+
+def _bad(message: str) -> HTTPException:
+    return HTTPException(status_code=400, detail=message)
+
+
+def create_app(
+    root: Path | None = None, limits: Limits | None = None, target: Target = run_job
+) -> FastAPI:
+    limits = limits or Limits.from_env()
+    root = Path(root or os.environ.get("VIRAPRIME_JOBS_DIR")
+                or Path(tempfile.gettempdir()) / "viraprime-jobs")
+    manager = JobManager(root, limits, target)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        manager.cleanup()
+        manager.start()
+        yield
+        manager.stop()
+
+    app = FastAPI(title="viraprime", version=__version__, lifespan=lifespan)
+    app.state.manager = manager
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    max_body = int(limits.max_upload_mb * 1024 * 1024) + 256 * 1024  # file plus form fields
+
+    @app.middleware("http")
+    async def refuse_large_bodies(request: Request, call_next):
+        size = request.headers.get("content-length", "")
+        if request.method == "POST" and size.isdigit() and int(size) > max_body:
+            return JSONResponse(status_code=413, content={"detail": (
+                f"The upload is larger than {limits.max_upload_mb:g} MB; "
+                "use the command line for larger inputs.")})
+        return await call_next(request)
+
+    @app.get("/", include_in_schema=False)
+    def index() -> FileResponse:
+        return FileResponse(STATIC / "index.html")
+
+    @app.get("/api/example", response_class=PlainTextResponse)
+    def example() -> str:
+        return (STATIC / "example.fasta").read_text()
+
+    @app.get("/api/limits")
+    def get_limits() -> dict[str, object]:
+        return {
+            "max_upload_mb": limits.max_upload_mb,
+            "max_seqs": limits.max_seqs,
+            "max_seq_len": limits.max_seq_len,
+            "max_amplicons": limits.max_amplicons,
+            "retention_hours": limits.retention_s / 3600,
+            "timeout_minutes": limits.timeout_s / 60,
+            "aligners": _aligners(),
+        }
+
+    @app.post("/api/jobs")
+    async def create_job(
+        mode: str = Form("tile"),
+        params: str = Form("{}"),
+        fasta_text: str = Form(""),
+        primers_text: str = Form(""),
+        fasta: UploadFile | None = File(None),
+    ) -> dict[str, str]:
+        if mode not in MODES:
+            raise _bad(f"unknown mode: {mode}")
+        try:
+            settings = json.loads(params)
+        except ValueError:
+            raise _bad("settings are not valid JSON") from None
+        if not isinstance(settings, dict):
+            raise _bad("settings must be a JSON object")
+
+        max_bytes = int(limits.max_upload_mb * 1024 * 1024)
+        content = await fasta.read(max_bytes + 1) if fasta is not None else fasta_text.encode()
+        if len(content) > max_bytes:
+            raise _bad(f"The file is larger than {limits.max_upload_mb:g} MB; "
+                       "use the command line for larger inputs.")
+        if not content.strip():
+            raise _bad("Add your sequences (FASTA) first.")
+
+        try:
+            flags = build_argv(mode, settings)
+        except ValueError as exc:
+            raise _bad(str(exc)) from None
+        argv = (["check"] if mode == "check" else []) + ["-i", "input.fasta"]
+        argv += (["--primers", "primers.tsv"] if mode == "check" else []) + flags
+        stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(stderr):
+                args, _, _ = parse_args([*argv, "-o", "out"])  # run_job adds -o itself
+            validate_args(args)
+        except SystemExit:
+            raise _bad(_usage_message(stderr.getvalue())) from None
+        except PipelineError as exc:
+            raise _bad(str(exc)) from None
+        if args.aligner not in _aligners():
+            raise _bad(f"{args.aligner.upper()} is not installed on this server; use "
+                       f"{' or '.join(a.upper() for a in _aligners()) or 'the command line'}.")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            upload = Path(tmp) / "input.fasta"
+            upload.write_bytes(content)
+            try:
+                _, longest = validate_upload(upload, limits)
+            except ValueError as exc:
+                raise _bad(str(exc)) from None
+            files = {"input.fasta": content}
+            if mode == "tile":
+                n = args.amplicons
+                if n > limits.max_amplicons:
+                    raise _bad(f"The web app tiles up to {limits.max_amplicons} amplicons.")
+                most = max_amplicons(longest, args.overlap, args.primer_len_max)
+                if n > most:
+                    raise _bad(f"N too large: amplicons would be ~"
+                               f"{target_length(longest, n, args.overlap)} bp; use at most {most}")
+            if mode == "check":
+                if not primers_text.strip():
+                    raise _bad("Paste your primer pairs (name, forward, reverse) first.")
+                primers = Path(tmp) / "primers.tsv"
+                primers.write_text(primers_text)
+                try:
+                    load_assays(primers, args.three_prime_window)
+                except PipelineError as exc:
+                    raise _bad(str(exc).replace(str(primers), "primers")) from None
+                files["primers.tsv"] = primers_text.encode()
+        try:
+            return {"id": manager.submit(files, argv)}
+        except QueueFull:
+            raise HTTPException(status_code=503, detail=(
+                "The server is busy: too many jobs are waiting. Try again in a few minutes, "
+                "or use the command line.")) from None
+
+    def _job(job_id: str) -> None:
+        if not JOB_ID.match(job_id):
+            raise HTTPException(status_code=404, detail="no such job")
+
+    @app.get("/api/jobs/{job_id}")
+    def job_status(job_id: str) -> dict:
+        _job(job_id)
+        try:
+            return manager.status(job_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="no such job (results are deleted "
+                                f"after {limits.retention_s / 3600:g} hours)") from None
+
+    @app.get("/api/jobs/{job_id}/files/{name}")
+    def job_file(job_id: str, name: str) -> FileResponse:
+        _job(job_id)
+        path = manager.output(job_id, name)
+        if path is None:
+            raise HTTPException(status_code=404, detail="no such file")
+        return FileResponse(path, media_type="text/plain", filename=name)
+
+    @app.get("/api/jobs/{job_id}/zip")
+    def job_zip(job_id: str) -> Response:
+        _job(job_id)
+        paths = [p for name in OUTPUT_FILES if (p := manager.output(job_id, name))]
+        if not paths:
+            raise HTTPException(status_code=404, detail="no such job")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for p in paths:
+                zf.write(p, p.name)
+        return Response(buf.getvalue(), media_type="application/zip", headers={
+            "Content-Disposition": f'attachment; filename="viraprime-{job_id[:8]}.zip"'})
+
+    return app
+
+
+app = create_app()

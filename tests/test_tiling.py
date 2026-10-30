@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+import logging
+from types import SimpleNamespace
+
+import pytest
+
+from tests.synthetic import make_genome_family
+from viraprime import tiling
+from viraprime.conservation import build_consensus, score_columns
+from viraprime.coords import CoordMap
+from viraprime.io import alignment_from_records
+from viraprime.models import PipelineError, PrimerCandidate, Record, TilingParams
+from viraprime.tiling import choose, geometry, tile
+
+PARAMS = TilingParams(
+    n_amplicons=5, overlap=50, tm_min=57, tm_opt=60, tm_max=63, max_tm_diff=2,
+    len_min=18, len_max=25, gc_min=40, gc_max=60, max_mismatches=2, window=5,
+    degenerate=True, max_degeneracy=4, min_coverage=95,
+)
+
+
+def _prepare(rows):
+    aln = alignment_from_records([Record(i, s) for i, s in rows])
+    stats = score_columns(aln)
+    cons = build_consensus(stats)
+    return aln, cons, stats, CoordMap(aln, rows[0][0], cons)
+
+
+def _params(**kw) -> TilingParams:
+    return TilingParams(**{**PARAMS.__dict__, **kw})
+
+
+@pytest.fixture(scope="module")
+def family():
+    return _prepare(make_genome_family())
+
+
+@pytest.fixture(scope="module")
+def result(family):
+    return tile(*family, PARAMS)
+
+
+# --- choose() on hand-built candidates -------------------------------------------
+
+def _p(strand: str, start: int, bits: int, n: int = 10) -> PrimerCandidate:
+    mask = (1 << bits) - 1 if bits <= n else (1 << n) - 1
+    return PrimerCandidate(strand, start, 20, "A" * 20, "A" * 20, "A" * 20, 60.0, None, 50.0, 0.0, mask, [])
+
+
+def test_choose_maximises_worst_amplicon() -> None:
+    # genome 1000, n=2: L=525, lengths 420-630, end slack 131, max outer overlap 209
+    geom = geometry(1000, 2, 50, 0.20, 25)
+    fwds = [_p("+", 0, 10), _p("+", 350, 7), _p("+", 450, 8)]
+    revs = [_p("-", 480, 10), _p("-", 600, 8), _p("-", 960, 10)]
+    # path A: f0-r480 (10) then f350-r960 (7): sum 17, worst 7
+    # path B: f0-r600 (8)  then f450-r960 (8): sum 16, worst 8  <- expected
+    path = choose(fwds, revs, 2, geom, _params(n_amplicons=2), 1000)
+    assert [(f.start, r.start) for f, r in path] == [(0, 600), (450, 960)]
+
+
+def test_choose_returns_none_when_no_tiling() -> None:
+    geom = geometry(1000, 2, 50, 0.20, 25)
+    fwds = [_p("+", 0, 10)]
+    revs = [_p("-", 480, 10), _p("-", 960, 10)]
+    assert choose(fwds, revs, 2, geom, _params(n_amplicons=2), 1000) is None
+
+
+# --- tile() on the genome family ---------------------------------------------------
+
+def test_exact_count_pools_and_order(result) -> None:
+    amps = result.amplicons
+    assert [a.index for a in amps] == [1, 2, 3, 4, 5]
+    assert [a.pool for a in amps] == [1, 2, 1, 2, 1]
+    starts = [a.fwd.start for a in amps]
+    assert starts == sorted(set(starts))
+
+
+def test_overlap_and_same_pool_spacing(result) -> None:
+    amps = result.amplicons
+    for a, b in zip(amps, amps[1:]):
+        overlap = a.rev.start - b.fwd.end - 1
+        assert overlap >= 50 and a.overlap_next == overlap
+    assert amps[-1].overlap_next is None
+    for a, c in zip(amps, amps[2:]):
+        assert c.fwd.start > a.rev.end
+
+
+def test_reaches_both_ends(result) -> None:
+    slack = result.geometry.end_slack
+    assert result.amplicons[0].fwd.start <= slack
+    assert result.amplicons[-1].rev.end >= 6000 - 1 - slack
+
+
+def test_avoids_hypervariable_block(result) -> None:
+    for a in result.amplicons:
+        for p in (a.fwd, a.rev):
+            assert p.end < 3000 or p.start >= 3300
+        assert a.coverage.coverage_pct == 100.0 and not a.below_threshold
+
+
+def test_mask_agrees_with_score_pair(result) -> None:
+    for a in result.amplicons:
+        assert bin(a.fwd.mask & a.rev.mask).count("1") == len(a.coverage.covered)
+
+
+def test_n1_single_amplicon() -> None:
+    res = tile(*_prepare(make_genome_family(length=1500, n_seqs=6, hyper=(700, 800))),
+               _params(n_amplicons=1))
+    assert len(res.amplicons) == 1
+    assert res.amplicons[0].pool == 1 and res.amplicons[0].overlap_next is None
+
+
+def test_widening_reported(family, monkeypatch, caplog) -> None:
+    real = tiling.choose
+
+    def strict_fails(fwds, revs, n, geom, params, genome_len):
+        return None if geom.tolerance == 0.20 else real(fwds, revs, n, geom, params, genome_len)
+
+    monkeypatch.setattr(tiling, "choose", strict_fails)
+    with caplog.at_level(logging.INFO, logger="viraprime"):
+        res = tile(*family, PARAMS)
+    assert res.geometry.tolerance == 0.35
+    assert "±35 %" in caplog.text
+
+
+def test_no_fit_message() -> None:
+    rows = [(i, s[:1400] + "A" * 3200 + s[4600:]) for i, s in make_genome_family()]
+    with pytest.raises(PipelineError) as exc:
+        tile(*_prepare(rows), _params(n_amplicons=3))
+    msg = str(exc.value)
+    assert "no acceptable primers between" in msg and "try -n" in msg
+
+
+def test_n_too_large(family) -> None:
+    with pytest.raises(PipelineError, match="use at most"):
+        tile(*family, _params(n_amplicons=40))
+
+
+def test_dimer_warning_format(family, monkeypatch) -> None:
+    monkeypatch.setattr(tiling.primer3, "calc_heterodimer", lambda a, b: SimpleNamespace(dg=-12000.0))
+    res = tile(*family, PARAMS)
+    assert res.dimer_warnings
+    assert res.dimer_warnings[0].startswith("pool 1: viraprime_1_LEFT × ")
+    assert "-12.0 kcal/mol" in res.dimer_warnings[0]
+
+
+def test_choose_prefers_reaching_the_ends() -> None:
+    geom = geometry(1000, 1, 50, 0.20, 25)  # one amplicon, end slack 250
+    import dataclasses
+    # primers at the very ends have a worse penalty; reaching the ends must still win
+    fwds = [dataclasses.replace(_p("+", 0, 10), penalty=1.0), _p("+", 150, 10)]
+    revs = [_p("-", 830, 10), dataclasses.replace(_p("-", 980, 10), penalty=1.0)]
+    path = choose(fwds, revs, 1, geom, _params(n_amplicons=1), 1000)
+    assert [(f.start, r.start) for f, r in path] == [(0, 980)]
+
+
+def test_no_fit_suggests_a_smaller_n_that_works() -> None:
+    rows = [(i, s[:2000] + "N" * 1500 + s[3500:]) for i, s in make_genome_family()]
+    prepared = _prepare(rows)
+    with pytest.raises(PipelineError) as exc:
+        tile(*prepared, _params(n_amplicons=10))
+    hint = str(exc.value).split("try -n ", 1)[1]
+    suggested = [int(x) for x in hint.split(", ")]
+    assert suggested and all(m < 10 for m in suggested)
+    assert len(tile(*prepared, _params(n_amplicons=suggested[0])).amplicons) == suggested[0]
+
+
+def test_wide_variable_block_gives_a_flagged_tiling_not_an_error() -> None:
+    # 1,200 bp where every base varies (p=0.25): too wide for 10 amplicons to step over
+    res = tile(*_prepare(make_genome_family(hyper=(2500, 3700))), _params(n_amplicons=10))
+    assert len(res.amplicons) == 10
+    low = [a for a in res.amplicons if a.below_threshold]
+    assert low
+    near = lambda p: p.end >= 2400 and p.start <= 3800
+    for a in low:  # only amplicons with a primer in or near the block fall short
+        assert near(a.fwd) or near(a.rev)
+    for a in res.amplicons:
+        if a.rev.end < 2400 or a.fwd.start > 3800:
+            assert not a.below_threshold

@@ -335,7 +335,7 @@ WARNING: Regions without a pair meeting --min-coverage: hv</span>
   /* ---------- Start: command builder ---------- */
   const form = $('#builder');
   if (form) {
-    let aligner = 'mafft', mode = 'design';
+    let aligner = 'mafft', mode = 'tile';
     const quote = (s) => (/^[\w./:@%+=,-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
     const regionRe = /^([A-Za-z0-9_.-]+:)?\d+-\d+$/;
     const err = $('#dlg-err');
@@ -347,16 +347,23 @@ WARNING: Regions without a pair meeting --min-coverage: hv</span>
       const input = f.input.value.trim(), out = f.out.value.trim() || 'out';
       mark(f.input, !input); if (!input) problems.push('Name the input FASTA.');
       let parts;
-      if (mode === 'check') {
+      if (mode === 'tile') {
+        const n = parseInt(f.n.value, 10);
+        [f.primers, f.regions, f.amin, f.amax].forEach((el) => mark(el, false));
+        mark(f.n, !(n > 0)); if (!(n > 0)) problems.push('The number of amplicons must be 1 or more.');
+        parts = ['viraprime', '-i', quote(input || 'genomes.fasta'), '-n', String(n > 0 ? n : 10), '-o', quote(out)];
+        if (aligner !== 'mafft') parts.push('--aligner', aligner);
+        if (!f.deg.checked) parts.push('--no-degenerate');
+      } else if (mode === 'check') {
         const primers = f.primers.value.trim();
         mark(f.primers, !primers); if (!primers) problems.push('Name the primers file.');
-        [f.regions, f.amin, f.amax].forEach((el) => mark(el, false));
+        [f.regions, f.amin, f.amax, f.n].forEach((el) => mark(el, false));
         parts = ['viraprime', 'check', '-i', quote(input || 'family.fasta'), '--primers', quote(primers || 'assays.tsv'), '-o', quote(out)];
         if (aligner !== 'mafft') parts.push('--aligner', aligner);
       } else {
         const regions = f.regions.value.trim().split(/\s+/).filter(Boolean);
         const amin = parseInt(f.amin.value, 10), amax = parseInt(f.amax.value, 10);
-        mark(f.primers, false);
+        mark(f.primers, false); mark(f.n, false);
         const badReg = regions.filter((r) => !regionRe.test(r));
         mark(f.regions, badReg.length > 0); if (badReg.length) problems.push(`Region “${badReg[0]}” should look like cons:61-540.`);
         const badAmp = !(amin > 0) || !(amax > 0) || amin > amax;
@@ -375,8 +382,8 @@ WARNING: Regions without a pair meeting --min-coverage: hv</span>
     $$('[data-mode]', form).forEach((b) => b.addEventListener('click', () => {
       mode = b.dataset.mode;
       $$('[data-mode]', form).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-      $$('[data-only]', form).forEach((el) => (el.hidden = el.dataset.only !== mode));
-      $('#dlg-title').textContent = mode === 'check' ? 'New check' : 'New run';
+      $$('[data-only]', form).forEach((el) => (el.hidden = !el.dataset.only.split(' ').includes(mode)));
+      $('#dlg-title').textContent = { tile: 'New tiling', design: 'New region run', check: 'New check' }[mode];
       build();
     }));
     form.addEventListener('input', build);

@@ -1,10 +1,16 @@
 # viraprime
 
-Design PCR primer pairs that work across a family of related sequences (variants of a gene,
-strains of a virus, …). The tool aligns the sequences, builds a consensus, asks
-[primer3](https://primer3.org) for candidate pairs on the consensus inside one or more target
-regions, and then **re-checks every candidate against every individual sequence**. Pairs are
-ranked by how many sequences they actually amplify.
+Design PCR primers that work across a family of related sequences (strains of a virus,
+variants of a gene, …). Give it your genomes and the number of amplicons you want: it tiles
+the whole genome with that many overlapping amplicons in two pools, choosing primer sites that
+match as many of your sequences as possible. Every primer is checked against every sequence,
+not just a consensus.
+
+```bash
+viraprime -i genomes.fasta -n 10 -o out
+```
+
+Prefer not to install anything? See [Run it from the web](#run-it-from-the-web).
 
 ## Installation
 
@@ -17,7 +23,108 @@ pip install -e .
 Python ≥ 3.10 is required. Python dependencies are listed in `requirements.txt`; MAFFT (default)
 or MUSCLE 5 must be on `PATH` unless you pass a pre-aligned file with `--aligned`.
 
-## Example
+## Quick start: tile a genome
+
+```bash
+python examples/make_example.py                # writes examples/genomes.fasta (24 genomes, 9 kb)
+viraprime -i examples/genomes.fasta -n 8 -o out
+```
+
+This aligns the genomes, then picks 8 overlapping amplicons (~1.2 kb each, at least 50 bp
+overlap) covering the genome end to end. Odd amplicons go in pool 1 and even ones in pool 2,
+so overlapping products never share a tube. It writes:
+
+- `primers.tsv`: one row per amplicon: pool, primer names (`viraprime_1_LEFT`, …) and
+  sequences, Tm, GC, reference coordinates, overlap with the next amplicon, coverage and the
+  sequences each amplicon misses, with the reason.
+- `scheme.bed`: the primer scheme in ARTIC format (`chrom start end name pool strand
+  sequence`), ready for amplicon-sequencing pipelines.
+- `report.txt`: settings, input and alignment statistics, the tiling, bases left uncovered at
+  the genome ends, possible primer dimers within a pool, and the log.
+- `alignment.fasta`: the alignment used.
+
+### How the amplicons are chosen
+
+1. Every position of the consensus is tried as a primer 3′ end; primers outside the Tm, GC and
+   length limits, or with hairpins, self-dimers or a G/C-heavy 3′ end, are dropped.
+2. The most conserved primers are kept and checked against every sequence with the matching
+   rules below. Degenerate (IUPAC) bases are added where they rescue sequences, up to
+   `--max-degeneracy` variants per primer.
+3. A dynamic-programming search picks exactly N amplicons: it maximises the worst amplicon's
+   coverage, then the total coverage, then how close the tiling reaches both genome ends, then
+   primer quality. Amplicon lengths may vary ±20 % around the target; if no tiling fits, the
+   tool retries at ±35 % and ±50 % and says so.
+4. Primers in the same pool are checked for primer-dimers (reported, not blocking).
+
+### Tiling options
+
+| Option | Default | Description |
+|---|---|---|
+| `-n/--amplicons` | — | number of amplicons |
+| `--overlap` | 50 | minimum overlap between neighbouring amplicons (bp, between the primers) |
+| `--tm-min/--tm-opt/--tm-max` | 57 / 60 / 63 | primer Tm (°C) |
+| `--max-tm-diff` | 2 | max Tm difference within a pair (°C) |
+| `--primer-len-min/--primer-len-max` | 18 / 25 | primer length |
+| `--gc-min/--gc-max` | 40 / 60 | primer GC % |
+| `--max-mismatches` | 2 | max mismatches per primer |
+| `--three-prime-window` | 5 | 3′ bases that must match exactly |
+| `--no-degenerate` | off | plain primers only |
+| `--max-degeneracy` | 4 | max variants per degenerate primer |
+| `--min-coverage` | 95 | coverage target (%) |
+| `-i`/`--aligned`, `--aligner`, `--reference-id`, `--length-tolerance`, `--outlier-action`, `-v` | | as below |
+
+Exit codes: `0` every amplicon reaches `--min-coverage`, `2` at least one does not (outputs are
+still written), `1` error (for example too many amplicons for the genome length; the message
+says the most that fit).
+
+## Run it from the web
+
+The same tool runs as a web app: drop your FASTA, choose the number of amplicons, and get the
+primers with a coverage map and downloads. A "Check my primers" tab tests pairs you already have.
+Uploaded files are deleted 24 hours after the job finishes; for private or larger data, use the
+command line.
+
+Run it on your own computer:
+
+```bash
+pip install -e ".[web]"
+viraprime web            # opens http://127.0.0.1:8000
+```
+
+Or with Docker (MAFFT included):
+
+```bash
+docker build -t viraprime-web .
+docker run --rm -p 7860:7860 viraprime-web     # http://localhost:7860
+```
+
+Limits can be changed with environment variables: `VIRAPRIME_MAX_SEQS` (500),
+`VIRAPRIME_MAX_SEQ_LEN` (35000), `VIRAPRIME_MAX_UPLOAD_MB` (20), `VIRAPRIME_MAX_AMPLICONS` (200),
+`VIRAPRIME_WORKERS` (2), `VIRAPRIME_MAX_QUEUE` (20), `VIRAPRIME_TIMEOUT_S` (900), `VIRAPRIME_RETENTION_S` (86400) and
+`VIRAPRIME_JOBS_DIR`.
+
+### Put it online (Hugging Face Space, free)
+
+The Space runs the same web app with the **Gradio** SDK, which is free: Hugging Face installs
+MAFFT from `deploy/hf-space/packages.txt` and starts `deploy/hf-space/app.py`.
+
+1. Create a free account at [huggingface.co](https://huggingface.co), then **New Space**: any
+   name, SDK **Gradio**, template **Blank**, hardware **CPU basic** (free).
+2. Create an access token with **write** permission (Settings → Access Tokens).
+3. In this GitHub repository, Settings → Secrets and variables → Actions: add the secret
+   `HF_TOKEN` (the token) and the variable `HF_SPACE` (`<owner>/<space name>`).
+4. Run the **Deploy web app to Hugging Face** workflow once from the Actions tab (it also runs
+   on every push to master that changes the app). The app appears at
+   `https://huggingface.co/spaces/<owner>/<space name>`. A free Space sleeps when idle and
+   takes about 30 seconds to wake up.
+
+## Advanced: target regions
+
+Instead of tiling the whole genome you can design pairs inside chosen regions
+(`--region`, `--amplicon-min`, `--amplicon-max`), or check primers you already have
+(`viraprime check`).
+
+### Example
 
 ```bash
 python examples/make_example.py          # writes examples/family.fasta (10 synthetic sequences)
@@ -32,7 +139,7 @@ finds pairs with 100 % coverage in `cons`, reports the best available (30 %) pai
 
 `python -m viraprime …` works the same as `viraprime …`.
 
-## Checking existing primers
+### Checking existing primers
 
 `viraprime check` tests primer pairs you already have (a published assay, pairs from an earlier
 run, pairs from another tool) against your sequences, without designing new ones. Each primer is
@@ -71,7 +178,7 @@ with design mode (`-i`/`--aligned`, `--aligner`, `--reference-id`, `--length-tol
 the same; design-only options such as `--region` are rejected. Exit codes: `0` every pair meets
 `--min-coverage`, `2` at least one does not (outputs are still written), `1` error.
 
-## Pipeline
+### Pipeline (region design)
 
 1. **Load & validate** the FASTA: errors on missing/empty files, empty records, duplicate IDs
    and non-IUPAC characters. Lowercase and `U` are accepted (converted to upper-case / `T`).
@@ -87,7 +194,7 @@ the same; design-only options such as `--region` are rejected. Exit codes: `0` e
    degenerate bases (`--allow-degenerate`).
 7. **Rank** by coverage, then primer3 penalty, and report the top `--num-pairs` per region.
 
-### Matching rules
+### Matching rules (all modes)
 
 A primer matches a sequence when it has at most `--max-mismatches` mismatches **and** none in the
 last `--three-prime-window` bases of its 3′ end. A pair covers a sequence when both primers match.
@@ -102,7 +209,7 @@ farthest from the 3′ end), as long as the primer's fold (number of distinct ol
 below `--max-degeneracy`. The 3′-terminal base is never made degenerate, and changes that do not
 end up rescuing a sequence are undone.
 
-## Coordinates and regions
+### Coordinates and regions
 
 All coordinates are 1-based, inclusive, on the reference sequence (`--reference-id`, default the
 first sequence). They are converted to alignment columns internally.
@@ -115,7 +222,7 @@ first sequence). They are converted to alignment columns internally.
 
 Regions are designed independently and may overlap.
 
-## Options
+### Region design options
 
 | Option | Default | Description |
 |---|---|---|
@@ -125,7 +232,7 @@ Regions are designed independently and may overlap.
 | `--aligner` | `mafft` | `mafft` or `muscle` |
 | `--reference-id` | first sequence | reference for coordinates |
 | `--region` / `--regions-file` | whole reference | target regions (see above) |
-| `--amplicon-min`, `--amplicon-max` | **required** | amplicon length range (bp) |
+| `--amplicon-min`, `--amplicon-max` | **required** for region design | amplicon length range (bp) |
 | `--tm-min/--tm-opt/--tm-max` | 57 / 60 / 63 | primer Tm (°C) |
 | `--max-tm-diff` | 2 | max Tm difference within a pair (°C) |
 | `--primer-len-min/--primer-len-max` | 18 / 25 | primer length |
@@ -141,7 +248,7 @@ Regions are designed independently and may overlap.
 | `--num-pairs` | 5 | pairs reported per region |
 | `-v/--verbose` | off | debug logging and tracebacks |
 
-## Outputs
+### Region design outputs
 
 - `alignment.fasta` — the alignment used (after outlier removal).
 - `primers.tsv` — one row per reported pair: `region, rank, forward_seq, reverse_seq, forward_tm,
@@ -154,7 +261,7 @@ Regions are designed independently and may overlap.
   per region (candidates, coverage, and why the best pair misses sequences when no pair reaches
   `--min-coverage`), a summary, and the full log.
 
-## Exit codes
+### Exit codes (region design)
 
 | Code | Meaning |
 |---|---|
