@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 from viraprime.io import alignment_from_records, load_fasta
 from viraprime.models import Alignment, PipelineError, Record
@@ -15,6 +15,18 @@ from viraprime.models import Alignment, PipelineError, Record
 log = logging.getLogger(__name__)
 
 Aligner = Literal["mafft", "muscle"]
+AlignFn = Callable[[list[Record]], Alignment]
+
+# aligners provided by the host program (e.g. a WebAssembly MAFFT in the browser)
+_REGISTERED: dict[str, AlignFn] = {}
+
+
+def register_aligner(name: str, fn: AlignFn | None) -> None:
+    """Use fn instead of the external program `name`; None removes the registration."""
+    if fn is None:
+        _REGISTERED.pop(name, None)
+    else:
+        _REGISTERED[name] = fn
 
 
 def check_binary(tool: Aligner) -> str:
@@ -30,6 +42,14 @@ def check_binary(tool: Aligner) -> str:
 
 def run_aligner(records: list[Record], tool: Aligner) -> Alignment:
     """Align records and return rows in the input order."""
+    if tool in _REGISTERED:
+        log.info("Aligning %d sequences with %s", len(records), tool)
+        result = _REGISTERED[tool](records)
+        rows = dict(zip(result.ids, result.rows))
+        missing = [r.id for r in records if r.id not in rows]
+        if missing:
+            raise PipelineError(f"{tool} output is missing sequences: {', '.join(missing)}")
+        return alignment_from_records([Record(r.id, rows[r.id]) for r in records])
     binary = check_binary(tool)
     with tempfile.TemporaryDirectory(prefix="viraprime_") as tmp:
         tmpdir = Path(tmp)

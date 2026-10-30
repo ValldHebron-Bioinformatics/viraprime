@@ -14,24 +14,16 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi import Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from viraprime import __version__
-from viraprime.check import load_assays
-from viraprime.cli import parse_args, validate_args
-from viraprime.models import PipelineError
-from viraprime.tiling import max_amplicons, target_length
 from viraprime.web.jobs import OUTPUT_FILES, JobManager, QueueFull, Target, run_job
-from viraprime.web.params import MODES, Limits, build_argv, validate_upload
+from viraprime.web.params import Limits
+from viraprime.web.prepare import prepare_job
 
 STATIC = Path(__file__).parent / "static"
 JOB_ID = re.compile(r"^[0-9a-f]{32}$")
-
-
-def _usage_message(stderr: str) -> str:
-    lines = [ln for ln in stderr.splitlines() if "error: " in ln]
-    return lines[-1].split("error: ", 1)[1] if lines else "invalid settings"
 
 
 def _aligners() -> list[str]:
@@ -60,6 +52,7 @@ def create_app(
     app = FastAPI(title="viraprime", version=__version__, lifespan=lifespan)
     app.state.manager = manager
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    static_files = {p.name for p in STATIC.iterdir() if p.is_file() and p.name != "index.html"}
     max_body = int(limits.max_upload_mb * 1024 * 1024) + 256 * 1024  # file plus form fields
 
     @app.middleware("http")
@@ -71,9 +64,21 @@ def create_app(
                 "use the command line for larger inputs.")})
         return await call_next(request)
 
+    page = (STATIC / "index.html").read_text().replace(
+        '<meta charset="utf-8">',
+        '<meta charset="utf-8">\n<meta name="viraprime-server" content="1">', 1)
+
     @app.get("/", include_in_schema=False)
-    def index() -> FileResponse:
-        return FileResponse(STATIC / "index.html")
+    def index() -> HTMLResponse:
+        """The page, marked so it uses this server instead of running in the browser."""
+        return HTMLResponse(page)
+
+    @app.get("/{name}", include_in_schema=False)
+    def page_file(name: str) -> FileResponse:
+        """The page's own files at the root too, so its relative links work here and on Pages."""
+        if name not in static_files:
+            raise HTTPException(status_code=404, detail="not found")
+        return FileResponse(STATIC / name)
 
     @app.get("/api/example", response_class=PlainTextResponse)
     def example() -> str:
@@ -99,68 +104,16 @@ def create_app(
         primers_text: str = Form(""),
         fasta: UploadFile | None = File(None),
     ) -> dict[str, str]:
-        if mode not in MODES:
-            raise _bad(f"unknown mode: {mode}")
         try:
             settings = json.loads(params)
         except ValueError:
             raise _bad("settings are not valid JSON") from None
-        if not isinstance(settings, dict):
-            raise _bad("settings must be a JSON object")
-
         max_bytes = int(limits.max_upload_mb * 1024 * 1024)
         content = await fasta.read(max_bytes + 1) if fasta is not None else fasta_text.encode()
-        if len(content) > max_bytes:
-            raise _bad(f"The file is larger than {limits.max_upload_mb:g} MB; "
-                       "use the command line for larger inputs.")
-        if not content.strip():
-            raise _bad("Add your sequences (FASTA) first.")
-
         try:
-            flags = build_argv(mode, settings)
+            argv, files = prepare_job(mode, settings, content, primers_text, limits, _aligners())
         except ValueError as exc:
             raise _bad(str(exc)) from None
-        argv = (["check"] if mode == "check" else []) + ["-i", "input.fasta"]
-        argv += (["--primers", "primers.tsv"] if mode == "check" else []) + flags
-        stderr = io.StringIO()
-        try:
-            with contextlib.redirect_stderr(stderr):
-                args, _, _ = parse_args([*argv, "-o", "out"])  # run_job adds -o itself
-            validate_args(args)
-        except SystemExit:
-            raise _bad(_usage_message(stderr.getvalue())) from None
-        except PipelineError as exc:
-            raise _bad(str(exc)) from None
-        if args.aligner not in _aligners():
-            raise _bad(f"{args.aligner.upper()} is not installed on this server; use "
-                       f"{' or '.join(a.upper() for a in _aligners()) or 'the command line'}.")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            upload = Path(tmp) / "input.fasta"
-            upload.write_bytes(content)
-            try:
-                _, longest = validate_upload(upload, limits)
-            except ValueError as exc:
-                raise _bad(str(exc)) from None
-            files = {"input.fasta": content}
-            if mode == "tile":
-                n = args.amplicons
-                if n > limits.max_amplicons:
-                    raise _bad(f"The web app tiles up to {limits.max_amplicons} amplicons.")
-                most = max_amplicons(longest, args.overlap, args.primer_len_max)
-                if n > most:
-                    raise _bad(f"N too large: amplicons would be ~"
-                               f"{target_length(longest, n, args.overlap)} bp; use at most {most}")
-            if mode == "check":
-                if not primers_text.strip():
-                    raise _bad("Paste your primer pairs (name, forward, reverse) first.")
-                primers = Path(tmp) / "primers.tsv"
-                primers.write_text(primers_text)
-                try:
-                    load_assays(primers, args.three_prime_window)
-                except PipelineError as exc:
-                    raise _bad(str(exc).replace(str(primers), "primers")) from None
-                files["primers.tsv"] = primers_text.encode()
         try:
             return {"id": manager.submit(files, argv)}
         except QueueFull:
@@ -180,6 +133,14 @@ def create_app(
         except KeyError:
             raise HTTPException(status_code=404, detail="no such job (results are deleted "
                                 f"after {limits.retention_s / 3600:g} hours)") from None
+
+    @app.delete("/api/jobs/{job_id}")
+    def cancel_job(job_id: str) -> dict[str, bool]:
+        _job(job_id)
+        try:
+            return {"cancelled": manager.cancel(job_id)}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="no such job") from None
 
     @app.get("/api/jobs/{job_id}/files/{name}")
     def job_file(job_id: str, name: str) -> FileResponse:

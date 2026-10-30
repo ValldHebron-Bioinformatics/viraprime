@@ -254,3 +254,5 @@ td.lead { white-space: normal; max-width: 260px; }
 td.lead .sub { overflow-wrap: anywhere; }
 .steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 14px; color: var(--muted); max-width: 640px; }
 .steps strong { color: var(--ink); font-weight: 500; }
+#cancel { align-self: flex-start; font-size: 13px; color: var(--muted); }
+#cancel:hover { color: var(--ink); }

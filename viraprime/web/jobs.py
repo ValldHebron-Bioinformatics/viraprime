@@ -6,7 +6,6 @@ logs never mix and a job that runs too long can be stopped.
 
 from __future__ import annotations
 
-import csv
 import json
 import multiprocessing
 import os
@@ -23,32 +22,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 from viraprime.web.params import Limits
+from viraprime.web.result import OUTPUT_FILES, build_result
 
 Target = Callable[[Path, list[str]], None]
-OUTPUT_FILES = ("primers.tsv", "scheme.bed", "check.tsv", "report.txt", "alignment.fasta")
-
-
-def _read_rows(path: Path) -> list[dict[str, str]]:
-    with path.open() as fh:
-        return list(csv.DictReader(fh, delimiter="\t"))
-
-
-def _reference(out: Path) -> tuple[str | None, int | None]:
-    """Reference ID (from report.txt) and its ungapped length (from alignment.fasta)."""
-    report, aln = out / "report.txt", out / "alignment.fasta"
-    if not report.is_file() or not aln.is_file():
-        return None, None
-    ref = next((line.split(": ", 1)[1] for line in report.read_text().splitlines()
-                if line.startswith("Reference: ")), None)
-    current, length = None, 0
-    for line in aln.read_text().splitlines():
-        if line.startswith(">"):
-            if current == ref:
-                break
-            current, length = line[1:].split()[0], 0
-        elif current == ref:
-            length += len(line.strip().replace("-", ""))
-    return ref, length if current == ref else None
 
 
 def run_job(job_dir: Path, argv: list[str]) -> None:
@@ -67,21 +43,7 @@ def run_job(job_dir: Path, argv: list[str]) -> None:
             traceback.print_exc()
             code = 1
         log.flush()
-    lines = (job_dir / "log.txt").read_text().splitlines()
-    out = job_dir / "out"
-    table = out / ("check.tsv" if argv[:1] == ["check"] else "primers.tsv")
-    errors = [ln[len("ERROR: "):] for ln in lines if ln.startswith("ERROR: ")]
-    usage = [ln.split("error: ", 1)[1] for ln in lines if "error: " in ln and ln.startswith("viraprime")]
-    ref, ref_len = _reference(out)
-    result = {
-        "exit_code": code,
-        "mode": "check" if argv[:1] == ["check"] else "tile" if "-n" in argv else "regions",
-        "rows": _read_rows(table) if table.is_file() and code != 1 else [],
-        "reference_id": ref,
-        "reference_length": ref_len,
-        "warnings": [ln[len("WARNING: "):] for ln in lines if ln.startswith("WARNING: ")],
-        "error": (errors or usage or ["the job failed; see the log"])[-1] if code == 1 else None,
-    }
+    result = build_result(job_dir, argv, code)
     (job_dir / "result.json").write_text(json.dumps(result))
 
 
@@ -200,6 +162,20 @@ class JobManager:
                 "result": job.result,
                 "error": job.error,
             }
+
+    def cancel(self, job_id: str) -> bool:
+        """Stop a queued or running job (and its aligner); False if it already finished."""
+        with self._lock:
+            job = self._jobs[job_id]  # KeyError if unknown
+            if job.state == "queued":
+                self._queue.remove(job_id)
+            elif job.state == "running":
+                _kill_group(job.process)
+                job.process.join(5)
+            else:
+                return False
+            self._finish(job, "Cancelled")
+            return True
 
     def output(self, job_id: str, name: str) -> Path | None:
         """Path of a finished job's output file, or None."""

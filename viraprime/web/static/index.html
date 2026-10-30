@@ -7,17 +7,17 @@
 <meta name="description" content="Drop your virus genomes, choose how many amplicons you want, and get overlapping primer pairs in two pools, checked against every sequence.">
 <meta name="color-scheme" content="light">
 <meta name="theme-color" content="#f7f7f7">
-<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap"><!-- taste-skill-ignore: mono for primer sequences only -->
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="app.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <div class="shell">
   <aside class="side" aria-label="viraprime">
-    <a class="wordmark" href="/" translate="no">viraprime</a>
+    <a class="wordmark" href="./" translate="no">viraprime</a>
     <nav class="modes" aria-label="What to do">
       <a href="#design" data-mode="design" aria-current="page">Design primers</a>
       <a href="#check" data-mode="check">Check my primers</a>
@@ -25,7 +25,7 @@
     <div class="side-foot">
       <a href="https://github.com/ValldHebron-Bioinformatics/viraprime">Command line &amp; source</a>
       <a href="https://valldhebron-bioinformatics.github.io/viraprime/">About viraprime</a>
-      <p>Files are deleted <span data-retention>24 hours</span> after your job finishes. For private or larger data, use the command line.</p>
+      <p id="privacy" aria-live="polite">Checking where the analysis will run…</p>
     </div>
   </aside>
 
@@ -126,6 +126,7 @@
         <div class="progress" id="progress" hidden>
           <p class="progress-label" id="progress-label">Starting…</p>
           <div class="bar" role="progressbar" aria-labelledby="progress-label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="bar"><span id="bar-fill"></span></div>
+          <button type="button" class="btn-text" id="cancel" hidden>Cancel</button>
         </div>
 
         <dl class="figures" id="figures" hidden></dl>
@@ -154,6 +155,7 @@
     </div>
   </main>
 </div>
-<script src="/static/app.js" defer></script>
+<script src="engine.js" defer></script>
+<script src="app.js" defer></script>
 </body>
 </html>

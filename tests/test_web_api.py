@@ -152,3 +152,29 @@ def test_only_installed_aligners(client: TestClient, monkeypatch) -> None:
     assert client.get("/api/limits").json()["aligners"] == ["mafft"]
     r = _post(client, "tile", {"amplicons": 4, "aligner": "muscle"})
     assert r.status_code == 400 and "MUSCLE is not installed" in r.json()["detail"]
+
+
+def test_page_files_at_the_root(client: TestClient) -> None:
+    for name in ("app.js", "engine.js", "app.css", "engine-worker.js", "favicon.svg"):
+        assert client.get(f"/{name}").status_code == 200, name
+    assert client.get("/nope.js").status_code == 404
+    assert 'src="engine.js"' in client.get("/").text
+
+
+def test_served_page_marks_the_server(client: TestClient) -> None:
+    assert '<meta name="viraprime-server" content="1">' in client.get("/").text
+    static = (Path(__file__).resolve().parent.parent / "viraprime/web/static/index.html").read_text()
+    assert "viraprime-server" not in static  # on GitHub Pages the page runs in the browser
+
+
+def test_delete_cancels_a_job(tmp_path: Path) -> None:
+    from tests.test_web_jobs import fake_job
+
+    app = create_app(tmp_path / "jobs", Limits(workers=1), target=fake_job)
+    app.state.manager.start = lambda: None  # keep the job queued
+    with TestClient(app) as c:
+        job = _post(c, "tile", {"amplicons": 4}).json()["id"]
+        assert c.delete(f"/api/jobs/{job}").status_code == 200
+        assert c.get(f"/api/jobs/{job}").json()["status"] == "failed"
+        assert c.delete(f"/api/jobs/{'a' * 32}").status_code == 404
+        assert c.delete("/api/jobs/not-a-job").status_code == 404

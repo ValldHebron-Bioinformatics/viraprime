@@ -7,6 +7,8 @@ name = "viraprime"
 version = "0.2.0"
 description = "Design consensus PCR primers from a multi-FASTA of related sequences"
 requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = ["biopython>=1.81", "primer3-py>=2.0"]
 
 [project.optional-dependencies]

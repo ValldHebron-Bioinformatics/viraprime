@@ -136,3 +136,29 @@ def test_queue_is_capped(tmp_path: Path) -> None:
         pass
     else:
         raise AssertionError("third queued job should be refused")
+
+
+def test_cancel_stops_a_running_job_and_its_aligner(tmp_path: Path) -> None:
+    mgr = JobManager(tmp_path, Limits(workers=1, timeout_s=600), target=job_with_grandchild)
+    job = mgr.submit({}, [])
+    deadline = time.time() + 20
+    while not (tmp_path / job / "child.pid").exists() and time.time() < deadline:
+        mgr.tick()
+        time.sleep(0.05)
+    pid = int((tmp_path / job / "child.pid").read_text())
+    assert mgr.cancel(job) is True
+    st = mgr.status(job)
+    assert st["status"] == "failed" and st["error"] == "Cancelled"
+    time.sleep(0.5)
+    assert not _alive(pid)
+    assert mgr.cancel(job) is False  # already finished
+
+
+def test_cancel_a_queued_job(tmp_path: Path) -> None:
+    mgr = JobManager(tmp_path, Limits(workers=1), target=fake_job)
+    mgr.submit({}, ["30"])
+    queued = mgr.submit({}, ["0"])
+    mgr.tick()
+    assert mgr.cancel(queued) is True
+    assert mgr.status(queued)["status"] == "failed"
+    assert mgr.status(queued)["queue_position"] is None

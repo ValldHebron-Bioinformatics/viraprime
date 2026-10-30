@@ -79,12 +79,22 @@ says the most that fit).
 
 ## Run it from the web
 
-The same tool runs as a web app: drop your FASTA, choose the number of amplicons, and get the
-primers with a coverage map and downloads. A "Check my primers" tab tests pairs you already have.
-Uploaded files are deleted 24 hours after the job finishes; for private or larger data, use the
-command line.
+Open the web app at **https://valldhebron-bioinformatics.github.io/viraprime/app/**: drop your
+FASTA, choose the number of amplicons, and get the primers with a coverage map and downloads.
+A "Check my primers" tab tests pairs you already have.
 
-Run it on your own computer:
+The analysis runs **in your browser**: viraprime, primer3 and MAFFT are compiled to
+WebAssembly, so your sequences are never uploaded and nothing needs installing. The first run
+loads about 20 MB of tools, which the browser keeps for later visits. It gives the same
+results as the command line: the design steps are the same code, and the alignment runs the
+same MAFFT programs (version 7.526) with the same method choice as `mafft --auto` (L-INS-i,
+FFT-NS-i or FFT-NS-2, depending on the number and length of the sequences). For very large
+sets (hundreds of long genomes) the command line is faster.
+
+### Run it on your own server
+
+The same page can run jobs on a server instead (useful for large inputs or a shared lab
+machine). On your own computer:
 
 ```bash
 pip install -e ".[web]"
@@ -95,28 +105,20 @@ Or with Docker (MAFFT included):
 
 ```bash
 docker build -t viraprime-web .
-docker run --rm -p 7860:7860 viraprime-web     # http://localhost:7860
+docker run -d --restart unless-stopped -p 7860:7860 viraprime-web   # http://<host>:7860
 ```
 
-Limits can be changed with environment variables: `VIRAPRIME_MAX_SEQS` (500),
+Server limits can be changed with environment variables: `VIRAPRIME_MAX_SEQS` (500),
 `VIRAPRIME_MAX_SEQ_LEN` (35000), `VIRAPRIME_MAX_UPLOAD_MB` (20), `VIRAPRIME_MAX_AMPLICONS` (200),
-`VIRAPRIME_WORKERS` (2), `VIRAPRIME_MAX_QUEUE` (20), `VIRAPRIME_TIMEOUT_S` (900), `VIRAPRIME_RETENTION_S` (86400) and
-`VIRAPRIME_JOBS_DIR`.
+`VIRAPRIME_WORKERS` (2), `VIRAPRIME_MAX_QUEUE` (20), `VIRAPRIME_TIMEOUT_S` (900),
+`VIRAPRIME_RETENTION_S` (86400) and `VIRAPRIME_JOBS_DIR`. Server uploads are deleted after
+`VIRAPRIME_RETENTION_S`.
 
-### Put it online (Hugging Face Space, free)
+### How the browser version is built
 
-The Space runs the same web app with the **Gradio** SDK, which is free: Hugging Face installs
-MAFFT from `deploy/hf-space/packages.txt` and starts `deploy/hf-space/app.py`.
-
-1. Create a free account at [huggingface.co](https://huggingface.co), then **New Space**: any
-   name, SDK **Gradio**, template **Blank**, hardware **CPU basic** (free).
-2. Create an access token with **write** permission (Settings → Access Tokens).
-3. In this GitHub repository, Settings → Secrets and variables → Actions: add the secret
-   `HF_TOKEN` (the token) and the variable `HF_SPACE` (`<owner>/<space name>`).
-4. Run the **Deploy web app to Hugging Face** workflow once from the Actions tab (it also runs
-   on every push to master that changes the app). The app appears at
-   `https://huggingface.co/spaces/<owner>/<space name>`. A free Space sleeps when idle and
-   takes about 30 seconds to wake up.
+`tools/build_wasm.sh` rebuilds the compiled parts in `site/app/engine/` (primer3-py for
+Pyodide, and the MAFFT programs `mafft --auto` runs, for WebAssembly); `tools/build_site.py`
+assembles the GitHub Pages site, and `.github/workflows/pages.yml` deploys it on every push to master.
 
 ## Advanced: target regions
 
